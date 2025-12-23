@@ -7,6 +7,7 @@ import json
 import time
 import os
 import textwrap
+import subprocess
 
 # Config
 # DB_FILE = 'Dashboard_Database.csv' # This constant is no longer needed as the path is hardcoded in load_data
@@ -104,7 +105,7 @@ def get_progress():
         return None
 
 def main():
-    st.set_page_config(layout="wide", page_title="Automobile Spare Parts Forecasting")
+    # st.set_page_config moved to module level
     
     # --- GLOBAL CSS (Canela Font) ---
     st.markdown("""
@@ -180,15 +181,50 @@ def main():
     # About Link Moved to Top
     # if os.path.exists("pages/About.py")...
         
-    # Local-Only Reload Button
+    # Local-Only Controls
     # Only show if specific user or environment indicates local dev
-    # Simple check: User path existence or environment variable
     is_local = os.path.exists("/Users/deevyendunshukla")
+    
     if is_local:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("Local Admin")
+        
+        # 1. Reload Data
         if st.sidebar.button("Reload Data Source"):
             load_data.clear()
-            load_data.clear()
+            st.cache_data.clear()
             st.rerun()
+
+        # 2. Deploy to Cloud
+        if st.sidebar.button("Deploy to Cloud 🚀"):
+            with st.sidebar.status("Deploying to GitHub...", expanded=True) as status:
+                try:
+                    # Add
+                    status.write("Staging files...")
+                    subprocess.run(["git", "add", "."], check=True)
+                    
+                    # Commit
+                    status.write("Committing...")
+                    # Allow empty commit to fail gracefully (or check status first)
+                    result = subprocess.run(["git", "commit", "-m", "Update from Dashboard Button"], capture_output=True, text=True)
+                    if result.returncode != 0 and "nothing to commit" in result.stdout:
+                         status.write("Nothing to commit (already up to date).")
+                    elif result.returncode != 0:
+                        status.update(label="Commit Failed", state="error")
+                        st.sidebar.error(f"Commit Error: {result.stderr}")
+                    
+                    # Push
+                    status.write("Pushing to Cloud...")
+                    subprocess.run(["git", "push"], check=True)
+                    
+                    status.update(label="Deployment Complete!", state="complete")
+                    st.sidebar.success("Changes pushed! Cloud update in ~2 mins.")
+                    
+                except subprocess.CalledProcessError as e:
+                    status.update(label="Deployment Failed", state="error")
+                    st.sidebar.error(f"Git Error: {e}")
+                except Exception as e:
+                    st.sidebar.error(f"Unexpected Error: {e}")
     
     # ETS Control
     
