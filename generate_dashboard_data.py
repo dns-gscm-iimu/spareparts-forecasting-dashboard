@@ -210,8 +210,33 @@ def run_nhits(train_series, val_len):
         pred_scaled = model.predict(n=val_len)
         pred = scaler.inverse_transform(pred_scaled)
         
-        # Train MAPE skipped for speed in pilot
-        return pred.values().flatten(), 0.0, np.zeros(len(train_series))
+        # Train MAPE - Historical Forecasts
+        # Use retrain=False to just use the fitted weights (fast-ish)
+        # start=0.5 means start forecasting as soon as the first input chunk is available
+        hist_scaled = model.historical_forecasts(
+            train_scaled, start=0.5, forecast_horizon=1, stride=1, retrain=False, verbose=False
+        )
+        hist = scaler.inverse_transform(hist_scaled)
+        
+        # Align actuals
+        # We need the actuals that correspond to the historical forecast time index
+        train_actuals = train_series.slice_intersect(hist)
+        
+        y_true = train_actuals.values().flatten()
+        y_pred = hist.values().flatten()
+        
+        # Handle zeros
+        y_true_safe = np.where(y_true == 0, 1e-6, y_true)
+        train_mape = np.mean(np.abs((y_true - y_pred) / y_true_safe))
+        
+        # We need to pad the training predictions to match the full training length for visualization
+        # The beginning will be zeros (warmup)
+        full_train_preds = np.zeros(len(train_series))
+        # Find start index
+        start_idx = len(train_series) - len(y_pred)
+        full_train_preds[start_idx:] = y_pred
+
+        return pred.values().flatten(), train_mape, full_train_preds
     except Exception as e:
         print(f"N-HiTS Error: {e}")
         return np.zeros(val_len), 0.0, np.zeros(len(train_series))

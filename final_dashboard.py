@@ -6,6 +6,7 @@ import plotly.express as px
 import json
 import time
 import os
+import textwrap
 
 # Config
 # DB_FILE = 'Dashboard_Database.csv' # This constant is no longer needed as the path is hardcoded in load_data
@@ -103,13 +104,39 @@ def get_progress():
         return None
 
 def main():
+    st.set_page_config(layout="wide", page_title="Automobile Spare Parts Forecasting")
+    
+    # --- GLOBAL CSS (Canela Font) ---
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
+    
+    h1, h2, h3, h4, h5, h6, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
+        font-family: 'Canela', 'Playfair Display', serif !important;
+    }
+    
+    /* Sidebar specific */
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        font-family: 'Canela', 'Playfair Display', serif !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # --- BANNER REMOVED (Moved to bottom) ---
+    # st.markdown(..., unsafe_allow_html=True)
+    
     st.title("Automobile Spare Parts Forecasting Dashboard")
-    st.markdown("Compare AI/ML models across different training strategies.")
+    
+    # Removed st.sidebar.title("Forecasting Lab") if it existed here, 
+    # but based on grep it was somewhere. Let's find where it was.
+    # Ah, grep found it, but I didn't see it in lines 120-160.
+    # It must be earlier or later.
+    # I will search for it specifically to remove it.
     
     df = load_data()
     
     # --- SIDEBAR & PROGRESS ---
-    st.sidebar.title("Forecasting Lab")
+    # st.sidebar.title("Forecasting Lab") # Removed
 
     # Progress Indicator
     prog = get_progress()
@@ -121,7 +148,7 @@ def main():
     elif prog:
         st.sidebar.success("Generation Complete!")
 
-    st.sidebar.subheader("Configuration")
+    # st.sidebar.subheader("Configuration") # Removed Duplicate Header
     
     if df.empty:
         st.warning("⚠️ Data is generating... Please wait and refresh in a few minutes.")
@@ -137,12 +164,33 @@ def main():
         return
 
     # Sidebar
-    st.sidebar.header("Configuration")
     
-    if st.sidebar.button("Reload Data Source"):
-        load_data.clear()
-        load_data.clear()
-        st.rerun()
+    # 1. About Link (Top Left)
+    if os.path.exists("pages/About.py"):
+        try:
+            st.sidebar.page_link("pages/About.py", label="About") # Removed icon
+        except KeyError:
+             st.sidebar.warning("⚠️ Restart app to enable 'About'")
+
+    # 2. Main Title (Replaced Forecasting Lab)
+    st.sidebar.markdown("<h1 style='font-size: 28px; font-weight: bold; margin-bottom: 20px;'>Modifications</h1>", unsafe_allow_html=True)
+    
+    # st.sidebar.header("Configuration") # Removed per request
+    
+    # About Link Moved to Top
+    # if os.path.exists("pages/About.py")...
+        
+    # Local-Only Reload Button
+    # Only show if specific user or environment indicates local dev
+    # Simple check: User path existence or environment variable
+    is_local = os.path.exists("/Users/deevyendunshukla")
+    if is_local:
+        if st.sidebar.button("Reload Data Source"):
+            load_data.clear()
+            load_data.clear()
+            st.rerun()
+    
+    # ETS Control
     
     # ETS Control
     enable_ets = st.sidebar.checkbox("Enable ETS (Holt-Winters)", value=False)
@@ -169,6 +217,7 @@ def main():
     best_fit_model = None
     best_fit_score = 999.0
     best_fit_mape = 0.0 # Just for display
+    best_fit_train_mape = 0.0 # For display
     
     # Filter for this part/loc regardless of split
     # Ensure Score exists
@@ -183,7 +232,9 @@ def main():
             best_fit_score = row['Score']
             best_fit_model = row['Model']
             best_fit_split = row['Split']
+            best_fit_split = row['Split']
             best_fit_mape = row['MAPE']
+            best_fit_train_mape = row['Train_MAPE'] if 'Train_MAPE' in row else 0.0
 
     # Auto-switch to Best Fit if Part/Loc changed
     if sel_part != st.session_state['last_part'] or sel_loc != st.session_state['last_loc']:
@@ -198,7 +249,9 @@ def main():
             
     if best_fit_split:
         st.sidebar.markdown("---")
-        st.sidebar.info(f"✨ **Recommendation**\n\nOptimal Strategy: **{best_fit_split}**\nModel: **{best_fit_model}**\nMAPE: **{best_fit_mape:.2%}**\n*(Based on Composite Score)*")
+    if best_fit_split:
+        st.sidebar.markdown("---")
+        st.sidebar.info(f"✨ **Recommendation**\n\nOptimal Strategy: **{best_fit_split}**\nModel: **{best_fit_model}**\nTest MAPE: **{best_fit_mape:.2%}**\nTrain MAPE: **{best_fit_train_mape:.2%}**\n*(Based on Composite Score)*")
         if st.sidebar.button("Apply Best Fit"):
             st.session_state['sel_split_state'] = best_fit_split
             st.rerun()
@@ -533,6 +586,8 @@ def main():
             st.error(f"Error loading forecast: {e}")
     else:
         st.warning("Future Forecast Database not found. Please regenerate data.")
+
+    # --- ABOUT SECTION REMOVED (Moved to pages/About.py) ---
 
 if __name__ == "__main__":
     main()
