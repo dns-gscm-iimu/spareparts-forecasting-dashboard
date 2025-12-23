@@ -1,0 +1,20 @@
+# Data (Keep DBs, ignore Raw)
+*.xlsx
+# Ignore processed CSVs? NO, we need them for the dashboard.
+# But ignore backup/temp files
+*.bak
+*.tmp
+*.log
+
+# System
+__pycache__/
+.DS_Store
+.env
+.venv
+venv/
+.streamlit/secrets.toml
+
+# Large Models/Checkpoints (if any)
+*.pt
+*.pth
+*_checkpoints/

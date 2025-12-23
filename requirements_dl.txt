@@ -1,0 +1,6 @@
+u8darts[torch]
+pandas
+statsmodels
+scikit-learn
+xgboost
+prophet
