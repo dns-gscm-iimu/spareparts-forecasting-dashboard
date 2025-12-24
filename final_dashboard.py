@@ -204,32 +204,42 @@ def main():
         if st.sidebar.button("Deploy to Cloud 🚀"):
             with st.sidebar.status("Deploying to GitHub...", expanded=True) as status:
                 try:
-                    # Add
+                    # 1. Add
                     status.write("Staging files...")
                     subprocess.run(["git", "add", "."], check=True)
                     
-                    # Commit
+                    # 2. Commit
                     status.write("Committing...")
-                    # Allow empty commit to fail gracefully (or check status first)
                     result = subprocess.run(["git", "commit", "-m", "Update from Dashboard Button"], capture_output=True, text=True)
                     if result.returncode != 0 and "nothing to commit" in result.stdout:
                          status.write("Nothing to commit (already up to date).")
                     elif result.returncode != 0:
                         status.update(label="Commit Failed", state="error")
                         st.sidebar.error(f"Commit Error: {result.stderr}")
+                        raise Exception("Commit failed")
                     
-                    # Push
+                    # 3. Pull (Rebase) - Critical for sync
+                    status.write("Pulling latest changes (Rebase)...")
+                    pull_res = subprocess.run(["git", "pull", "--rebase"], capture_output=True, text=True)
+                    if pull_res.returncode != 0:
+                        st.sidebar.warning(f"Pull Warning: {pull_res.stderr} - Trying to push anyway...")
+
+                    # 4. Push
                     status.write("Pushing to Cloud...")
-                    subprocess.run(["git", "push"], check=True)
+                    push_res = subprocess.run(["git", "push"], capture_output=True, text=True)
+                    if push_res.returncode != 0:
+                        status.update(label="Push Failed", state="error")
+                        st.sidebar.error(f"Push Error: {push_res.stderr}")
+                        raise Exception("Push failed")
                     
                     status.update(label="Deployment Complete!", state="complete")
                     st.sidebar.success("Changes pushed! Cloud update in ~2 mins.")
                     
                 except subprocess.CalledProcessError as e:
                     status.update(label="Deployment Failed", state="error")
-                    st.sidebar.error(f"Git Error: {e}")
+                    st.sidebar.error(f"Git Process Error: {e}")
                 except Exception as e:
-                    st.sidebar.error(f"Unexpected Error: {e}")
+                    st.sidebar.error(f"Error: {e}")
     
     # ETS Control
     
