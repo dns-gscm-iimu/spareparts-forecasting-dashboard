@@ -8,6 +8,7 @@ import time
 import os
 import textwrap
 import subprocess
+from datetime import datetime
 
 # Config
 # DB_FILE = 'Dashboard_Database.csv' # This constant is no longer needed as the path is hardcoded in load_data
@@ -109,8 +110,75 @@ def get_progress():
     except:
         return None
 
+
+# --- VISITOR TRACKING ---
+VISITOR_LOG = 'visitor_log.csv'
+
+def check_local_login():
+    """
+    Enforces a Google Login gate ONLY on Localhost.
+    Logs visitor ID to visitor_log.csv.
+    """
+    # 1. Check if Local
+    is_local = os.path.exists("/Users/deevyendunshukla")
+    
+    if not is_local:
+        return # Skip on Cloud
+        
+    # 2. Check Session State
+    if st.session_state.get('logged_in', False):
+        return # Already logged in
+        
+    # 3. Show Login Form
+    st.markdown("""
+    <style>
+    .login-container {
+        margin-top: 100px;
+        padding: 50px;
+        border-radius: 10px;
+        background-color: #f8f9fa;
+        text-align: center;
+        border: 1px solid #ddd;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        st.markdown("<div class='login-container'>", unsafe_allow_html=True)
+        st.title("🔒 Access Restricted")
+        st.write("This is a local instance. Please sign in with your Google ID to continue.")
+        
+        email = st.text_input("Google Email ID", placeholder="example@gmail.com")
+        
+        if st.button("Sign In"):
+            if email and "@" in email: # Basic validation
+                # Log it
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Append to CSV
+                new_entry = pd.DataFrame([{'Date': timestamp, 'User': email}])
+                new_entry.to_csv(VISITOR_LOG, mode='a', header=not os.path.exists(VISITOR_LOG), index=False)
+                
+                # Set Session
+                st.session_state['logged_in'] = True
+                st.session_state['user_email'] = email
+                st.success(f"Welcome, {email}!")
+                st.rerun()
+            else:
+                st.error("Please enter a valid email address.")
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+    
+    # Block execution if not logged in
+    st.stop()
+
 def main():
     # st.set_page_config moved to module level
+    
+    # --- AUTH CHECK (Local Only) ---
+    check_local_login()
+
     
     # --- GLOBAL CSS (Canela Font) ---
     st.markdown("""
@@ -240,6 +308,18 @@ def main():
                     st.sidebar.error(f"Git Process Error: {e}")
                 except Exception as e:
                     st.sidebar.error(f"Error: {e}")
+        
+        # 3. View Visitor Log
+        if st.sidebar.checkbox("View Visitor Log"):
+            st.sidebar.subheader("Recent Visitors")
+            if os.path.exists(VISITOR_LOG):
+                try:
+                    v_df = pd.read_csv(VISITOR_LOG)
+                    st.sidebar.dataframe(v_df.sort_values('Date', ascending=False).head(10), hide_index=True)
+                except Exception as e:
+                    st.sidebar.error("Log read error")
+            else:
+                st.sidebar.info("No visitors yet.")
     
     # ETS Control
     
