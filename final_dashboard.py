@@ -92,10 +92,15 @@ def load_data():
                 print(f"Scoring Calculation Failed: {inner_e}")
                 pass
 
-        return df
+        # Prepare History DF
+        history_df = pd.DataFrame()
+        if os.path.exists('history.csv'):
+            history_df = pd.read_csv('history.csv')
+            
+        return df, history_df
     except Exception as e:
         print(f"Data Load Error: {e}")
-        return pd.DataFrame(columns=['Part', 'Location', 'Split', 'Model', 'Date', 'Value', 'MAPE', 'RMSE', 'Bias', 'Score'])
+        return pd.DataFrame(columns=['Part', 'Location', 'Split', 'Model', 'Date', 'Value', 'MAPE', 'RMSE', 'Bias', 'Score']), pd.DataFrame()
 
 def get_progress():
     try:
@@ -134,7 +139,7 @@ def main():
     # It must be earlier or later.
     # I will search for it specifically to remove it.
     
-    df = load_data()
+    df, history_df = load_data()
     
     # --- SIDEBAR & PROGRESS ---
     # st.sidebar.title("Forecasting Lab") # Removed
@@ -455,15 +460,45 @@ def main():
     # --- CHART SECTION ---
     st.subheader("Forecast for Testing Period")
     
+    # Time Range Selection
+    view_options = ["Test Period Only"]
+    if not history_df.empty:
+        view_options.append("Full History (2021-2024)")
+    
+    view_sel = st.sidebar.selectbox("Chart History", view_options, index=0) # Sidebar or Main? Prompt said "include a dropdown option" in chart section
+    # Let's put it right here above chart for context, sidebar is getting crowded.
+    # Actually sidebar is standard for controls, but "in Forecast for Testing Period section" implies locality.
+    # Let's use cols.
+    
+    c_chart_ctrl, _ = st.columns([1, 3])
+    with c_chart_ctrl:
+        # Override sidebar selection if we want local control
+        # Actually, let's just make it a local widget
+        chart_view = st.selectbox("Time Range", view_options, key='chart_hist_view')
+
     fig = go.Figure()
     
     # 1. Actuals
-    actuals = subset[subset['Model'] == 'Actual'].sort_values('Date')
-    fig.add_trace(go.Scatter(
-        x=actuals['Date'], y=actuals['Value'],
-        mode='lines+markers', name='Actual Demand',
-        line=dict(color='black', width=3)
-    ))
+    if "Full History" in chart_view and not history_df.empty:
+        # Filter History
+        hist_sub = history_df[
+            (history_df['Part'] == sel_part) & 
+            (history_df['Location'] == sel_loc)
+        ].sort_values('Date')
+        
+        fig.add_trace(go.Scatter(
+            x=hist_sub['Date'], y=hist_sub['Value'],
+            mode='lines', name='Actual Demand (Full History)',
+            line=dict(color='black', width=2)
+        ))
+    else:
+        # Default: Subset Actuals
+        actuals = subset[subset['Model'] == 'Actual'].sort_values('Date')
+        fig.add_trace(go.Scatter(
+            x=actuals['Date'], y=actuals['Value'],
+            mode='lines+markers', name='Actual Demand',
+            line=dict(color='black', width=3)
+        ))
     
     # 2. Models
     colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33F6', '#FFC300', '#00BCD4', '#9C27B0']
