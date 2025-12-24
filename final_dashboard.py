@@ -114,22 +114,16 @@ def get_progress():
 # --- VISITOR TRACKING ---
 VISITOR_LOG = 'visitor_log.csv'
 
-def check_local_login():
+def check_login():
     """
-    Enforces a Google Login gate ONLY on Localhost.
+    Enforces a Google Login gate Universally (Cloud & Local).
     Logs visitor ID to visitor_log.csv.
     """
-    # 1. Check if Local
-    is_local = os.path.exists("/Users/deevyendunshukla")
-    
-    if not is_local:
-        return # Skip on Cloud
-        
-    # 2. Check Session State
+    # 1. Check Session State
     if st.session_state.get('logged_in', False):
         return # Already logged in
         
-    # 3. Show Login Form
+    # 2. Show Login Form
     st.markdown("""
     <style>
     .login-container {
@@ -176,8 +170,8 @@ def check_local_login():
 def main():
     # st.set_page_config moved to module level
     
-    # --- AUTH CHECK (Local Only) ---
-    check_local_login()
+    # --- AUTH CHECK (Universal) ---
+    check_login()
 
     
     # --- GLOBAL CSS (Canela Font) ---
