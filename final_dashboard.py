@@ -116,10 +116,16 @@ VISITOR_LOG = 'visitor_log.csv'
 
 def check_login():
     """
-    Enforces a Google Login gate Universally (Cloud & Local).
+    Enforces a Google Login gate ONLY on Localhost.
     Logs visitor ID to visitor_log.csv.
     """
-    # 1. Check Session State
+    # 1. Check if Local
+    is_local = os.path.exists("/Users/deevyendunshukla")
+    
+    if not is_local:
+        return # Skip on Cloud
+        
+    # 2. Check Session State
     if st.session_state.get('logged_in', False):
         return # Already logged in
         
