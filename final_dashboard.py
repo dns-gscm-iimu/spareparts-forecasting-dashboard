@@ -18,7 +18,7 @@ STATUS_FILE = 'generation_status.json'
 
 # --- DATA LOADING ---
 @st.cache_data
-def load_data():
+def load_data_v2():
     try:
         df = pd.read_csv('Dashboard_Database.csv')
         
@@ -139,7 +139,7 @@ def main():
     # It must be earlier or later.
     # I will search for it specifically to remove it.
     
-    df, history_df = load_data()
+    df, history_df = load_data_v2()
     
     # --- SIDEBAR & PROGRESS ---
     # st.sidebar.title("Forecasting Lab") # Removed
@@ -196,7 +196,7 @@ def main():
         
         # 1. Reload Data
         if st.sidebar.button("Reload Data Source"):
-            load_data.clear()
+            load_data_v2.clear()
             st.cache_data.clear()
             st.rerun()
 
