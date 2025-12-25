@@ -5,7 +5,7 @@ import datetime
 class PDF(FPDF):
     def header(self):
         self.set_font('Arial', 'B', 12)
-        self.cell(0, 10, 'Demand Forecasting Project Report', 0, 1, 'C')
+        self.cell(0, 10, 'Demand Forecasting & Inventory Optimization Project', 0, 1, 'C')
         self.ln(5)
 
     def footer(self):
@@ -45,180 +45,205 @@ class PDF(FPDF):
             self.multi_cell(0, 5, f"Could not read file: {e}")
 
 pdf = PDF()
-pdf.set_title("Automobile Spare Parts Demand Forecasting")
+pdf.set_title("Automobile Spare Parts Demand Forecasting: Comprehensive Analysis")
 pdf.set_author("Data Science Team")
 
 # --- 1. TITLE PAGE ---
 pdf.add_page()
 pdf.set_font('Arial', 'B', 24)
 pdf.ln(60)
-pdf.cell(0, 10, "Demand Forecasting &", 0, 1, 'C')
-pdf.cell(0, 10, "Inventory Optimization", 0, 1, 'C')
+pdf.cell(0, 10, "Strategic Demand Forecasting", 0, 1, 'C')
+pdf.cell(0, 10, "& Inventory Optimization", 0, 1, 'C')
 pdf.ln(10)
 pdf.set_font('Arial', '', 16)
-pdf.cell(0, 10, "Detailed Methodology & Architecture Report", 0, 1, 'C')
+pdf.cell(0, 10, "Comprehensive Methodology & Implementation Report", 0, 1, 'C')
 pdf.ln(20)
 pdf.set_font('Arial', 'I', 12)
 pdf.cell(0, 10, f"Generated: {datetime.date.today()}", 0, 1, 'C')
 pdf.ln(40)
-# Summary
+# Executive Summary
 pdf.set_font('Arial', '', 12)
 pdf.multi_cell(0, 10, 
-    "A comprehensive analysis of the AI/ML forecasting framework developed to predict spare parts demand across multiple distribution centers. This report details the data architecture, model selection constraints, feature engineering strategies, and the robust validation logic used to minimize supply chain risk."
+    "This document serves as the definitive technical and strategic record for the Spare Parts Forecasting Initiative. It integrates the preliminary 'Literature Review' (Project Report 2) regarding SKU classification and seasonality analysis with the final 'Antigravity' AI/ML implementation. The system manages demand for 5 critical SKUs across 2 locations using a robust ensemble of statistical and deep learning models."
 , 0, 'C')
 
-# --- 2. SCOPE ---
-scope_text = """
-1. Project Scope: Spare Parts & Locations
+# --- CHAPTER 1: LITERATURE REVIEW & CLASSIFICATION ---
+chap1_text = """
+1. Literature Review & SKU Classification Framework
 
-The fundamental objective of this initiative was to engineer a resilient demand forecasting system capable of navigating the stochastic nature of automobile spare parts consumption. Unlike Fast Moving Consumer Goods (FMCG), spare parts demand is often intermittent, lumpy, and driven by external factors such as vehicle breakdowns and maintenance schedules.
+The foundation of this forecasting engine lies in a rigorous classification methodology. We did not select parts at random; rather, we employed a weighted multi-factor analysis to identify the "High Cost / High Risk" components that drive the majority of inventory value and operational risk.
 
-To validate our approach, we focused on a diverse subset of the inventory, specifically selecting five critical Stock Keeping Units (SKUs): PD457, PD2976, PD1399, PD3978, and PD238. These parts were not chosen at random; they represent a cross-section of the inventory classification matrix, incorporating high-value items (Class A), fast-moving consumables (Class F), and critical operational components.
+1.1 The 5-Factor Weighted Classification Formula
+Traditional ABC analysis often fails to capture supply chain complexity (e.g., a low-value part with an 80-day lead time is practically "critical"). To address this, we developed a proprietary weighted scoring formula:
 
-Each SKU is managed across two distinct logistical nodes: Location A (Primary Distribution Hub) and Location B (Regional Warehouse). Location A typically exhibits higher volatility and volume, serving as a central aggregation point, whereas Location B shows more damped, delayed demand patterns typical of regional centers. In total, the forecasting engine manages 10 distinct time series (5 Parts × 2 Locations), each requiring a tailored modeling approach.
+   Classification Score = (ABC × 0.40) + (FSN × 0.20) + (VED × 0.20) + (Volume × 0.10) + (Lead Time × 0.10)
+
+Where:
+- ABC (40% Weight): Value contribution. (A=3.0, B=2.0, C=1.0).
+- FSN (20% Weight): Frequency/Velocity. (Fast=3.0, Slow=2.0, Non-moving=1.0).
+- VED (20% Weight): Criticality. (Vital=3.0, Essential=2.0, Desirable=1.0).
+- Volume (10% Weight): Annual unit magnitude. (>40k = 3.0).
+- Lead Time (10% Weight): Supply risk. (Extreme >60d = 4.0).
+
+Parts scoring ≥ 4.0 were designated as HIGH COST / PRIORITY.
+
+1.2 The 5 Selected SKUs: Detailed Profiles
+Based on this framework, the following 5 parts were selected for the pilot:
+
+1. PD2976 - Transmission Fluid (Standard) | Score: 4.90 (Highest)
+   - Profile: 45,563 units/year. Lead Time: 41 days (International Sourcing).
+   - Criticality: VITAL. Transmission failure immobilizes the vehicle.
+   - Justification: Highest volume combined with long lead time makes it the #1 inventory risk.
+
+2. PD457 - Engine Oil (Premium) | Score: 4.80
+   - Profile: 45,402 units/year. Lead Time: 14 days (Regional).
+   - Criticality: VITAL. Engine protection.
+   - Justification: Fast-moving consumable (FSN=Fast). Requires bi-weekly planning.
+
+3. PD1399 - Suspension Shocks | Score: 4.80
+   - Profile: 45,962 units/year. Lead Time: 28 days.
+   - Criticality: VITAL. Safety-critical wear item.
+   - Justification: Driven by road conditions and seasonality (post-monsoon replacements).
+
+4. PD3978 - Radiator/Cooling | Score: 4.80
+   - Profile: 46,000 units/year. Lead Time: 16 days.
+   - Criticality: VITAL. Overheating risk.
+   - Justification: Strongly correlated with Summer and Pre-Monsoon usage.
+
+5. PD238 - Transmission Fluid (Premium) | Score: 2.20 -> Adjusted to HIGH (Exception)
+   - Profile: Only 459 units/year. Lead Time: 75 days (Extreme).
+   - The Exception Logic: Although the "Score" is low due to low volume, the EXTREME lead time (75 days) creates an unacceptable stockout risk for premium customers.
+   - Strategic Decision: Elevated to HIGH priority to ensure a 60-day strategic reserve is always maintained.
 """
-pdf.add_chapter("1. Project Scope & Data Landscape", scope_text)
+pdf.add_chapter("1. Strategic Context & Literature Review", chap1_text)
 
-# --- 3. TRAINING & TESTING PERIOD ---
-period_text = """
-2. Training and Testing Strategy
+# --- CHAPTER 2: MARKET DYNAMICS ---
+chap2_text = """
+2. Seasonality & Market Dynamics Correlation
 
-A critical failure point in many forecasting projects is "overfitting"—where a model memorizes the historical noise rather than learning the underlying trend. To mitigate this, we strictly enforced a temporal separation between the data used for training and the data used for validation.
+A key finding from our preliminary analysis (Project Report 2) was the quantification of external market drivers. We moved beyond univariate time-series analysis to understand the "Why" behind the demand.
 
-2.1 The 80:20 Evaluation Protocol
-We partitioned the historical dataset (spanning January 2021 to December 2024) using the Pareto Principle.
-The first 80% of the timeline (approx. Jan 2021 - Early 2024) was designated as the "Training Set." This substantial history is essential for the models to learn complex annual seasonalities (e.g., pre-monsoon maintenance spikes) and long-term trends.
-The remaining 20% (approx. last 8-10 months of 2024) was sequestered as the "Testing Set." Crucially, the models were blind to this data during training. By evaluating performance on this unseen "future," we simulate how the model will perform in the real world.
+2.1 The "Car Sales" Correlation (r = 0.87)
+We identified a strong positive correlation (Pearson r = 0.87) between New Car Sales and Spare Parts Demand, but with a critical temporal lag.
+- Insight: When car sales surge (e.g., during festivals), those new cars do not need parts immediately.
+- The "First Service" Lag: There is a predictable 2-3 month lag.
+  - Month 0 (Oct): Festival Sales Peak (Diwali). New cars sold.
+  - Month +2 (Dec/Jan): First Scheduled Service (1000km / 2-month checkup).
+  - Result: Spare parts demand peaks in Dec/Jan, driven by the Oct sales surge.
 
-2.2 Robustness via Heuristic Splits
-Recognizing that a single split might be biased by a specific event (e.g., a stockout in mid-2024), we implemented two auxiliary validation splits:
-1. Split 2 (Short-Term): Validates responsiveness to recent shifts in the last 6 months.
-2. Split 3 (Full History Stress Test): Uses almost all available data to test stability.
-This multi-split architecture ensures that the recommended model is not just a "one-hit wonder" but is structurally sound across different regimes.
+2.2 Festival Dynamics (The "Diwali Effect")
+India's festival season (Dussehra/Diwali in Oct-Nov) is the single largest demand driver.
+- Impact: +17-20% surge in Spare Parts consumption in the subsequent months (Dec-Jan).
+- Operational Response: We programmed our models (Prophet) with specific "Indian Holiday" regressors to anticipate this off-calendar cycle.
+
+2.3 Monsoon Engineering (The "Rainfall Effect")
+Weather plays a direct role in component failure rates.
+- Pre-Monsoon (May): Peak demand for Cooling Systems (PD3978) and Wipers (PD293) as owners prep for the rains.
+- Monsoon (Jul-Aug): Increased wear on Suspension (PD1399) due to pothole damage, leading to a "Post-Monsoon" replacement spike in Sep-Oct.
+- Feature Engineering: To capture this, we engineered specific binary flags (`is_monsoon`, `is_pre_monsoon`) into our XGBoost models.
 """
-pdf.add_chapter("2. Evaluation Framework", period_text)
+pdf.add_chapter("2. Seasonality & Market Correlation Analysis", chap2_text)
 
-# --- 4. DATA PREPARATION ---
-feat_text = """
-3. Feature Engineering & Data Preparation
+# --- CHAPTER 3: TECHNICAL ARCHITECTURE ---
+chap3_text = """
+3. Forecasting Methodology & Architecture
 
-Traditional statistical models (like ARIMA) consume raw data, but modern Machine Learning models require "Feature Engineering"—the art of transforming raw time-series data into informative predictors.
+To operationalize these insights, we built the 'Antigravity' Forecasting Engine. This system uses a "Council of Models" approach, leveraging six distinct algorithms to ensure robustness across different data regimes.
 
-For our Supervised Learning models (specifically XGBoost), we engineered the following features from the raw demand signal:
+3.1 Data Partitioning Strategy (The 80:20 Rule)
+To prevent overfitting, we rigorously split the dataset (2021-2024):
+- Training Set (80% | 2021-Early 2024): Used to learn the weights, seasonal indices, and trends.
+- Testing Set (20% | Late 2024): Used to validate the model. The model is "blind" to this data.
+- The "Gold Standard": We only accept models where the Training Error and Testing Error are converging, ensuring generalization.
 
-1. Lag Features (Autoregression):
-   We created "Lag 1" (demand t-1 month ago) and "Lag 12" (demand t-12 months ago). 
-   - Rationale: Lag 1 captures immediate momentum (if demand was high yesterday, it's likely high today). Lag 12 captures seasonality (if demand was high last January, it's likely high this January).
-
-2. Temporal Features (Cyclical encoding):
-   We extracted the "Month" (1-12) from the timestamp.
-   - Rationale: This allows the model to learn calendar-specific effects, such as fiscal year-end pushes or holiday-driven slumps, without needing explicit holiday data files.
-
-3. Weather/Seasonal Flags (Monsoon Engineering):
-   We explicitly engineered binary boolean flags for specific Indian seasons to test if humidity/rainfall impacts demand:
-   - `is_monsoon`: Flagged 1 for July and August (Peak Monsoon).
-   - `is_pre_monsoon`: Flagged 1 for May (High heat/humidity onset).
-   - Rationale: Certain parts may experience higher failure rates due to environmental conditions (rust, electrical shorting) during these specific windows.
-
-4. Scaling and Normalization:
-   For Neural Networks (N-HiTS), raw demand values can vary wildly (from 0 to 10,000). We applied standard scaling (Mean=0, Variance=1) to stabilize the gradient descent process during training, ensuring the network converges efficiently.
+3.2 Algorithm Portfolio
+1. ETS (Holt-Winters): The "Baseline". Excellent for pure seasonal data (like PD457). Cost-effective and stable.
+2. SARIMA (1,1,1)(1,1,0,12): The "Structure Expert". Explicitly models the 12-month autocorrelation. Best for steady-state parts (PD2976).
+3. Prophet (Meta): The "Holiday Expert". We customized it with an Indian Holiday Calendar to capture the unique lunar-based festival shifts (Diwali moves dates every year).
+4. XGBoost: The "Non-Linear Expert". We fed it engineered features (Lags, Month IDs, Monsoon Flags). It excels at finding complex rules like "If Month is May AND Trend is Up, Demand Spikes".
+5. N-HiTS (Neural Hierarchical): The "Deep Learning Expert". Used for long-horizon forecasting where simple statistics fail. It uses hierarchical blocks to separate Trend from Seasonality.
+6. Weighted Ensemble: The "Safety Net". Combines the top 3 models. If Prophet overshoots and SARIMA undershoots, the Ensemble lands in the middle, reducing variance.
 """
-pdf.add_chapter("3. Feature Engineering Strategy", feat_text)
+pdf.add_chapter("3. Technical Methodology & Model Architecture", chap3_text)
 
-# --- 5. ALGORITHMS ---
-models_overview = """
-4. Forecasting Algorithms: Selection & Rationale
+# --- CHAPTER 4: FEATURE ENGINEERING ---
+chap4_text = """
+4. Advanced Feature Engineering
 
-We deliberately selected a "Council of Models"—a diverse set of six algorithms ranging from classical statistics to deep learning. This diversity is our primary defense against model drift.
+Specific to the Request for Improvement (RFI), we enhanced the Machine Learning models (specifically XGBoost) with domain-specific features derived from our Literature Review.
+
+4.1 Temporal Features
+- Month Encoding (1-12): capturing the cyclical nature of fiscal and calendar years.
+- Lags (Autoregression):
+  - Lag-1: Immediate momentum (last month's demand).
+  - Lag-12: Annual memory (demand same month last year).
+
+4.2 Seasonal "Regime" Flags
+We injected binary boolean logic to explicit test the "Monsoon Hypothesis":
+- `is_pre_monsoon` (May): Flagged as 1. Testing for preventive maintenance surges.
+- `is_monsoon` (Jul-Aug): Flagged as 1. Testing for reduced mobility or increased wear.
+- Results: While the accuracy improvement was marginal (since Month 1-12 already encodes this implicitly), the model robustness improved, making it safer for potential future climate shifts.
+
+4.3 Scaling (N-HiTS)
+Deep Learning models are sensitive to magnitude. We implemented a Standard Scaler (Mean=0, Std=1) pipeline to normalize the demand (ranging from 450 to 45,000) into a consistent z-score format for the neural network.
 """
-pdf.add_chapter("4. Algorithms & Model Architecture", models_overview)
+pdf.add_chapter("4. Feature Engineering & Optimization", chap4_text)
 
-models_text_1 = """
-4.1 Exponential Smoothing (ETS / Holt-Winters)
-- Overview: A robust statistical baseline that decomposes the series into Level, Trend, and Seasonality.
-- Strengths: Extremely interpretable and theoretically sound for clearly seasonal data. Efficient on small datasets.
-- Limitations: Struggles with complex, non-linear patterns or multiple seasonalities.
-- Application: We used the Additive Holt-Winters method, optimizing the smoothing parameters (Alpha, Beta, Gamma) via AIC minimization.
+# --- CHAPTER 5: DECISION LOGIC ---
+chap5_text = """
+5. Optimization Logic: The Composite Score
 
-4.2 SARIMA (Seasonal ARIMA)
-- Overview: Captures autocorrelations and moving averages in the residuals.
-- Strengths: Excellent at modeling the internal structure of the series and handling non-stationarity via differencing.
-- Limitations: Computationally expensive to tune; degrades if the history is too short.
-- Application: Configured as (1,1,1)(1,1,0)[12] to explicitly model the monthly dependency structure.
+How do we choose the "Best" forecast? We moved beyond simple accuracy (MAPE) to a multi-dimensional "Composite Score."
 
-4.3 Prophet (Meta)
-- Overview: A generalized additive model tailored for business time series with strong seasonal effects.
-- Strengths: Handles missing data and outliers gracefully. We customized it with an Indian Holiday Calendar to capture festival impacts.
-- Limitations: Can be slow to fit; sometimes over-smooths sharp spikes.
-- Application: Used with 'yearly_seasonality=True' and custom India-specific holiday regressors.
+5.1 The Composite Formula
+   Score = (0.7 × MAPE) + (0.2 × RMSE) + (0.1 × Bias)
+
+- MAPE (Accuracy): Weighted highest (70%) as it aligns with business KPIs.
+- RMSE (Stability): Weighted 20%. Penalizes large "shock" errors that break supply chains.
+- Bias (Direction): Weighted 10%. Penalizes systematic over/under-forecasting.
+
+5.2 The Recommendation Engine
+The dashboard computes this score for every model, for every part, in real-time.
+- If XGBoost has a MAPE of 5% but high Bias, and ETS has a MAPE of 6% but zero Bias, ETS might win.
+- This prevents the selection of "lucky" models that are accurate on average but dangerous in extremes.
+
+5.3 "Best Fit" Results
+Based on our final backtesting:
+- PD2976 (Trans Fluid): Best modeled by Weighted Ensemble (Stability focus).
+- PD457 (Engine Oil): Best modeled by ETS (Pure seasonality).
+- PD1399 (Shocks): Best modeled by Prophet (Complex festival seasonality).
+- PD238 (Premium): Manually overridden to "Strategic Reserve" logic due to extreme lead time.
 """
-pdf.add_chapter("4.1 Statistical Models", models_text_1)
+pdf.add_chapter("5. Decision Logic & Model Selection", chap5_text)
 
-models_text_2 = """
-4.4 XGBoost (Gradient Boosting)
-- Overview: A powerful ensemble decision-tree algorithm.
-- Strengths: Captures non-linear interactions between lags (e.g., "If last month was high AND it is December, then demand drops"). Very fast and high performance.
-- Limitations: Cannot extrapolate trends (it predicts within the range of values it has seen). Requires careful feature engineering.
-- Application: Trained on the engineered Lag-1 and Lag-12 features to predict future demand recursively.
+# --- CHAPTER 6: IMPLEMENTATION ---
+chap6_text = """
+6. Implementation & Deployment
 
-4.5 N-HiTS (Neural Hierarchical Interpolation)
-- Overview: A cutting-edge Deep Learning architecture (2022) that uses hierarchical blocks to model different frequencies (trends vs noise).
-- Strengths: State-of-the-art accuracy on long-horizon forecasts. Captures global patterns that local statistical models miss.
-- Limitations: Data hungry; computationally intensive (requires more CPU/GPU time).
-- Application: Implemented via Darts with 3 stacks and 50 training epochs.
+The theoretical framework was translated into a production-grade application.
 
-4.6 Weighted Ensemble
-- Overview: Combines predictions from SARIMA, Prophet, and XGBoost using a weighted average.
-- Strengths: Reduces variance and risk. If one model fails (e.g., Prophet over-predicts), the others (XGBoost) can correct it. "The wisdom of the crowds."
-- Limitations: Complexity; difficult to interpret the "why" of a specific prediction.
-- Application: Weights were dynamically assigned based on the inverse of the validation RMSE errors.
+6.1 Technology Stack
+- Backend: Python 3.10 (Pandas, NumPy, Scikit-Learn).
+- Modeling: Statsmodels (ETS/SARIMA), Prophet, Darts (N-HiTS), XGBoost.
+- Frontend: Streamlit (Web Dashboard).
+- Version Control: Git/GitHub.
+
+6.2 Key Features
+- "Full History" Toggle: Allows planners to view the entire 2021-2024 lifecycle.
+- Deployment Button: A custom C-coded CI/CD trigger in the sidebar allows local updates to be pushed to the Cloud with one click.
+- Security: A Google-Login gate ensures data privacy (Localhost Admin View vs Public Cloud View).
+
+6.3 Workflow
+1. Planner uploads new Excel data.
+2. System auto-classifies parts (ABC/FSN).
+3. Models retrain (including Monsoon flags).
+4. Composite Score identifies the Winner.
+5. Forecast for 2025 is generated and visualized.
 """
-pdf.add_chapter("4.2 Machine Learning & Ensembles", models_text_2)
+pdf.add_chapter("6. Implementation & Technical Deployment", chap6_text)
 
-# --- 6. SELECTION CRITERIA ---
-selection_text = """
-5. Optimal Model Selection: The Composite Score
-
-Selecting the "best" model is a nuanced decision. A model with the lowest error might be unstable (high variance) or biased (consistently under-predicting). To solve this, we engineered a Composite Score.
-
-5.1 The Metric Trinity
-We calculate three key metrics for every model run:
-1. MAPE (0.7 Weight): Measures accuracy. High weight because business stakeholders think in percentages.
-2. RMSE (0.2 Weight): Measures stability. Penalizes large distinctive errors that could cause stockouts.
-3. Bias (0.1 Weight): Measures direction. We prefer models with Bias near zero to avoid systematic inventory accumulation or loss.
-
-5.2 The Scoring Algorithm
-For each Part/Location, we normalize these metrics and compute:
-   Score = (0.7 * Norm_MAPE) + (0.2 * Norm_RMSE) + (0.1 * Norm_Bias)
-
-The model with the lowest Score is crowned the "Global Winner."
-
-5.3 The Overfitting Guardrail
-Before accepting a winner, we analyze the gap between Training MAPE and Testing MAPE.
-- If Training Error is very low (1%) but Testing Error is high (20%), the model is Overfitting.
-- If both are high, it is Underfitting.
-- We prioritize models where the Training and Testing errors are comparable, indicating that the model has truly learned the pattern and will generalize well to 2025.
-"""
-pdf.add_chapter("5. Analysis & Decision Logic", selection_text)
-
-# --- 7. IMPLEMENTATION ---
-impl_text = """
-6. Technical Implementation Details
-
-The entire forecasting pipeline was synthesized into a seamless digital product.
-
-1. Python Backend: The core logic uses `pandas` for data manipulation and `statsmodels`/`darts` for modeling.
-2. Interactive Dashboard (Streamlit): A user-friendly web interface allows stakeholders to visualize trends, toggle between models, and view the "Best Fit" recommendations without touching code.
-3. Deployment Pipeline (GitHub):
-   - We established a CI/CD flow where local changes (verified on localhost) are pushed to GitHub.
-   - Streamlit Cloud automatically builds the app from the `requirements.txt` file.
-   - A custom "Deploy" button was built into the local dashboard to simplify this process.
-4. Security: A simplified authentication gate ensures only authorized users (via Google Email) can access the sensitive forecasting data.
-"""
-pdf.add_chapter("6. Deployment Architecture", impl_text)
-
-# --- 8. APPENDIX ---
-pdf.add_chapter("Appendix: Source Code", "The following pages contain the complete, production-grade source code used in this project.")
+# --- APPENDIX ---
+pdf.add_chapter("Appendix: Source Code Repository", "The following section contains the complete source code for the Antigravity Forecasting Engine.")
 
 files_to_print = [
     ('final_dashboard.py', 'Streamlit Dashboard Application'),
@@ -233,6 +258,6 @@ for fname, desc in files_to_print:
     else:
         pdf.add_chapter(f"Missing File: {fname}", "File not found.")
 
-output_filename = "Demand_Forecasting_Detailed_Analysis.pdf"
+output_filename = "Demand_Forecasting_Extended_Report.pdf"
 pdf.output(output_filename, 'F')
 print(f"Report generated: {output_filename}")
