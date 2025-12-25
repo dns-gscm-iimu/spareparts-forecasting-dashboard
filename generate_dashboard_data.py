@@ -111,9 +111,12 @@ def run_xgboost(train_series_darts, val_len):
         df['lag_1'] = df['y'].shift(1)
         df['lag_12'] = df['y'].shift(12)
         df['Month'] = df.index.month
+        # Monsoon Features
+        df['is_pre_monsoon'] = (df.index.month == 5).astype(int) # May
+        df['is_monsoon'] = df.index.month.isin([7, 8]).astype(int) # Jul-Aug
         df = df.dropna()
         
-        X = df[['Month', 'lag_1', 'lag_12']]
+        X = df[['Month', 'lag_1', 'lag_12', 'is_pre_monsoon', 'is_monsoon']]
         y = df['y']
         
         if len(X) < 10: return np.zeros(val_len), 0.0, np.zeros(len(train_series_darts))
@@ -133,13 +136,28 @@ def run_xgboost(train_series_darts, val_len):
         curr_date = train_series_darts.end_time()
         
         for i in range(val_len):
-            next_month = (curr_date.month + i) % 12
-            if next_month == 0: next_month = 12
+            # Calculate next date to get month
+            # Darts end_time is the last time. So start from +1 month.
+            # Using simple month arithmetic
+            next_month_abs = (curr_date.month + i) % 12 + 1
+            # Note: The original logic (curr_date.month + i) % 12 was slightly buggy for Dec (0).
+            # Fix: (curr_date.month + i) % 12 + 1 is wrong if i starts at 0.
+            # Let's use dateutil or pandas to be safe?
+            # Or just fix the mapping: 
+            # If curr is Dec (12), i=0 -> next is Jan (1).
+            # Wait, curr_date is the LAST date. So first pred is curr + 1 step.
+            
+            # Simple offset logic
+            month_idx = (curr_date.month + i) % 12 + 1
             
             lag_1 = history[-1]
             lag_12 = history[-12] if len(history) >= 12 else history[-1]
             
-            p = model.predict(pd.DataFrame([[next_month, lag_1, lag_12]], columns=['Month', 'lag_1', 'lag_12']))[0]
+            is_pre = 1 if month_idx == 5 else 0
+            is_mon = 1 if month_idx in [7, 8] else 0
+            
+            p = model.predict(pd.DataFrame([[month_idx, lag_1, lag_12, is_pre, is_mon]], 
+                                           columns=['Month', 'lag_1', 'lag_12', 'is_pre_monsoon', 'is_monsoon']))[0]
             preds.append(p)
             history.append(p)
             
