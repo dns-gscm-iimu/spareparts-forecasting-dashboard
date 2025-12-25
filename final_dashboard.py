@@ -176,8 +176,8 @@ def check_login():
 def main():
     # st.set_page_config moved to module level
     
-    # --- AUTH CHECK (Universal) ---
-    check_login()
+    # --- AUTH CHECK (Disabled) ---
+    # check_login()
 
     
     # --- GLOBAL CSS (Canela Font) ---
