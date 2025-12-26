@@ -148,21 +148,39 @@ pdf.add_chapter("2. Seasonality & Market Correlation Analysis", chap2_text)
 chap3_text = """
 3. Forecasting Methodology & Architecture
 
-To operationalize these insights, we built the 'Antigravity' Forecasting Engine. This system uses a "Council of Models" approach, leveraging six distinct algorithms to ensure robustness across different data regimes.
+To operationalize these insights, we built the 'Antigravity' Forecasting Engine. This system avoids reliance on a single algorithm, instead deploying a "Council of Models"—a diverse ensemble of six distinct mathematical and machine learning architectures. This diversity ensures that whether a part behaves like a steady metronome or a chaotic festival-driven spike, there is a specialized model ready to capture it.
 
 3.1 Data Partitioning Strategy (The 80:20 Rule)
-To prevent overfitting, we rigorously split the dataset (2021-2024):
-- Training Set (80% | 2021-Early 2024): Used to learn the weights, seasonal indices, and trends.
-- Testing Set (20% | Late 2024): Used to validate the model. The model is "blind" to this data.
-- The "Gold Standard": We only accept models where the Training Error and Testing Error are converging, ensuring generalization.
+A critical risk in AI is "overfitting"—where a model memorizes historical noise rather than learning the underlying pattern. To prevent this, we rigorously split the dataset (2021-2024):
+- Training Set (80% | 2021-Early 2024): This period serves as the "textbook" for the models. They analyze these 3.2 years to learn the weights, seasonal indices, and long-term trends.
+- Testing Set (20% | Late 2024): This period acts as the "final exam." The model is blinded to this data. We forecast this period and compare it against reality.
+- The "Gold Standard": We only accept models where the Training Error and Testing Error are converging. If a model aces the Training but fails the Test, it is rejected as non-generalizable.
 
-3.2 Algorithm Portfolio
-1. ETS (Holt-Winters): The "Baseline". Excellent for pure seasonal data (like PD457). Cost-effective and stable.
-2. SARIMA (1,1,1)(1,1,0,12): The "Structure Expert". Explicitly models the 12-month autocorrelation. Best for steady-state parts (PD2976).
-3. Prophet (Meta): The "Holiday Expert". We customized it with an Indian Holiday Calendar to capture the unique lunar-based festival shifts (Diwali moves dates every year).
-4. XGBoost: The "Non-Linear Expert". We fed it engineered features (Lags, Month IDs, Monsoon Flags). It excels at finding complex rules like "If Month is May AND Trend is Up, Demand Spikes".
-5. N-HiTS (Neural Hierarchical): The "Deep Learning Expert". Used for long-horizon forecasting where simple statistics fail. It uses hierarchical blocks to separate Trend from Seasonality.
-6. Weighted Ensemble: The "Safety Net". Combines the top 3 models. If Prophet overshoots and SARIMA undershoots, the Ensemble lands in the middle, reducing variance.
+3.2 Algorithm Portfolio: Identifying the "Best Fit"
+
+1. ETS (Holt-Winters): The "Baseline"
+   - Background: Developed in the 1950s, Exponential Smoothing separates a time series into three components: Level (average), Trend (slope), and Seasonality (cycles). It assigns exponentially decreasing weights to older data.
+   - Why it fits our SKUs: For parts like PD457 (Engine Oil), the demand is driven by a very consistent 6-month service cycle. There are no sudden shocks, just a smooth, rhythmic heartbeat. ETS excels here because it doesn't overthink the problem—it simply projects this stable rhythm forward. It is the cost-effective, stable choice for "pure seasonality."
+
+2. SARIMA (Seasonal ARIMA): The "Structure Expert"
+   - Background: The Box-Jenkins method explicitly models the "correlation" between months. It asks: "Does the demand in January depend heavily on the demand last January (Lag-12)?"
+   - Why it fits our SKUs: For steady-state parts like PD2976 (Transmission Fluid), the demand creates a structured "memory." If usage was high last month, it affects inventory planning this month. SARIMA acts as the "Structure Expert," mathematically locking onto these 12-month correlations. It is less prone to chasing random noise than neural networks.
+
+3. Prophet (Meta): The "Holiday Expert"
+   - Background: Developed by Facebook to predict website traffic, Prophet is unique because it handles "moving holidays." Most models fail when Diwali shifts from October to November. Prophet allows us to feed a "holiday calendar" as a regressor.
+   - Why it fits our SKUs: Our "Festival Lag" analysis showed that PD1399 (Suspension) demand spikes exactly 2 months after Diwali. Since Diwali moves annually on the lunar calendar, a standard rigid model would miss the peak. Prophet dynamically shifts its forecast to align with the festival dates, making it the superior choice for festival-sensitive items.
+
+4. XGBoost: The "Non-Linear Expert"
+   - Background: An ensemble of Decision Trees. Unlike statistical models that look for smooth lines, XGBoost looks for "rules" (If Month is May AND Demand > 1000, then Spike).
+   - Why it fits our SKUs: Our feature engineering introduced complex flags like `is_monsoon` and `is_pre_monsoon`. Linear models struggle with binary switches. XGBoost excels at finding these non-linear "if-then" relationships, making it ideal for parts like PD3978 (Radiator) which react sharply to specific environmental triggers (heat/monsoon) rather than smooth trends.
+
+5. N-HiTS (Neural Hierarchical Interpolation): The "Deep Learning Expert"
+   - Background: A modern (2022) Deep Learning architecture that solves the "Long Horizon" problem. It breaks the signal into "stacks"—one stack learns the slow trend, another learns the fast seasonality.
+   - Why it fits our SKUs: For noisy/volatile parts where traditional statistics fail to see the signal, N-HiTS uses its "hierarchical blocks" to filter out the noise and capture the long-term annual trajectory. It is our "heavy artillery" when simple models underperform.
+
+6. Weighted Ensemble: The "Safety Net"
+   - Background: "The Wisdom of Crowds." No single model is perfect.
+   - Why it fits our SKUs: By averaging the top 3 models (e.g., 40% Prophet + 40% SARIMA + 20% XGBoost), we cancel out individual errors. If Prophet overshoots due to a festival flag, and SARIMA undershoots due to trend dampening, the Ensemble lands safely in the middle. This is the preferred choice for High Cost / High Risk items where stability is more important than spotting a single perfect peak.
 """
 pdf.add_chapter("3. Technical Methodology & Model Architecture", chap3_text)
 
