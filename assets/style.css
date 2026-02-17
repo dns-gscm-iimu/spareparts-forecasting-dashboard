@@ -1,0 +1,242 @@
+/* Main Global Styles */
+.stApp {
+    background: black;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Remove ALL Streamlit Padding/Margins to ensure Edge-to-Edge Video */
+.main .block-container {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    overflow: hidden !important;
+    /* Prevent scrollbars */
+}
+
+/* Hide Header/Footer/Hamburger */
+header[data-testid="stHeader"] {
+    display: none;
+}
+
+footer {
+    display: none;
+}
+
+/* Canela Font Definition */
+@font-face {
+    font-family: 'Canela';
+    src: url('pictures_dns/Canela Family/Canela-Regular-Trial.otf') format('opentype');
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* Video Background (Strict Fullscreen) */
+.video-background {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    min-width: 100%;
+    min-height: 100%;
+    width: auto;
+    height: auto;
+    transform: translate(-50%, -50%);
+    z-index: 0;
+    object-fit: cover;
+    /* This is key for covering the screen without stretch */
+    filter: brightness(0.5) contrast(1.1);
+}
+
+/* Landing Text Container (Absolute Center) */
+.landing-container {
+    position: fixed;
+    top: 35%;
+    /* Moved up slightly to make room for button */
+    left: 50%;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    z-index: 10;
+    width: 90%;
+    pointer-events: none;
+    /* Let clicks pass through if needed, but text needs selection? maybe not. */
+}
+
+.landing-subtitle {
+    font-family: 'Canela', serif;
+    font-size: 2.5rem;
+    color: #e0e0e0;
+    margin-bottom: 0.5rem;
+    text-shadow: 0 4px 8px rgba(0, 0, 0, 0.6);
+}
+
+.landing-title {
+    font-family: 'Canela', serif;
+    font-size: 5rem;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.1;
+    text-shadow: 0 4px 12px rgba(0, 0, 0, 0.8);
+    margin-bottom: 3rem;
+}
+
+/* BUTTON STYLING & ANIMATION */
+/* High Specificity to override Streamlit */
+div.stButton>button {
+    position: fixed;
+    top: 65%;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+
+    /* Size & Font */
+    font-family: 'Canela', serif !important;
+    font-size: 28px !important;
+    /* Increased Size */
+    padding: 15px 60px !important;
+    border-radius: 0px !important;
+    /* Making it cleaner for the underline effect, or we keep radius? User asked for underline. */
+    /* Let's keep a slight radius or completely clear to emphasize text? */
+    /* Usually modern buttons are pills. Let's stick to pill but add the internal line. */
+    border-radius: 50px !important;
+
+    /* Glassmorphism Base */
+    background: rgba(255, 255, 255, 0.1) !important;
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255, 255, 255, 0.4) !important;
+    color: #ffffff !important;
+
+    transition: all 0.3s ease;
+    overflow: hidden;
+    /* Important for the slide effect */
+}
+
+/* The Animated Underline using ::after */
+div.stButton>button::after {
+    content: '';
+    position: absolute;
+    bottom: 12px;
+    /* Position under the text */
+    left: 50%;
+    width: 0;
+    height: 2px;
+    background-color: #ffffff;
+    transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+    transform: translateX(-50%);
+}
+
+/* Hover State */
+div.stButton>button:hover {
+    background: rgba(255, 255, 255, 0.2) !important;
+    border-color: #ffffff !important;
+    transform: translateX(-50%) scale(1.05);
+    /* Maintain X centering while scaling */
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+/* Hover State - Trigger Underline */
+div.stButton>button:hover::after {
+    width: 60%;
+    /* Cover roughly the width of "Open Dashboard" text inside the wide button */
+}
+
+/* Focus/Active State Removal */
+div.stButton>button:focus {
+    box-shadow: none !important;
+    border-color: #ffffff !important;
+}
+
+
+
+/* --- EXISTING DASHBOARD STYLES (Keep strict scoping) --- */
+
+/* Card Styling */
+.metric-card {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(10px);
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s, box-shadow 0.2s;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    color: #333;
+    text-align: center;
+    cursor: pointer;
+    margin-bottom: 20px;
+}
+
+.metric-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 15px rgba(0, 0, 0, 0.15);
+    background: rgba(255, 255, 255, 0.9);
+}
+
+/* Typography */
+.metric-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 5px;
+    color: #2c3e50;
+}
+
+.metric-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: #2c3e50;
+    margin: 10px 0;
+}
+
+.metric-sub {
+    font-size: 14px;
+    color: #7f8c8d;
+}
+
+/* Status Badges */
+.badge-high {
+    background-color: #ffcccc;
+    color: #cc0000;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.badge-medium {
+    background-color: #fff3cd;
+    color: #856404;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.badge-low {
+    background-color: #d4edda;
+    color: #155724;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+/* Grid Layout Helper */
+.grid-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 20px;
+    padding: 20px 0;
+}
+
+/* Custom Tabs */
+div[data-baseweb="tab-list"] {
+    gap: 10px;
+}
+
+div[data-baseweb="tab"] {
+    background-color: rgba(255, 255, 255, 0.5);
+    border-radius: 10px 10px 0 0;
+    padding: 10px 20px;
+}
+
+div[data-baseweb="tab"][aria-selected="true"] {
+    background-color: #ffffff;
+    font-weight: bold;
+}

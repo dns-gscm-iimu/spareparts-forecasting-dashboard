@@ -1,754 +1,919 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-import json
-import time
 import os
-import textwrap
-import subprocess
+import base64
 from datetime import datetime
-
-# Config
-# DB_FILE = 'Dashboard_Database.csv' # This constant is no longer needed as the path is hardcoded in load_data
+import io
+from streamlit_echarts import st_echarts
+import forecasting_engine as fe
+import time
+import uuid
+import numpy as np
+from sklearn.metrics import mean_squared_error
 
 # --- CONFIG ---
-st.set_page_config(layout="wide", page_title="Automobile Spare Parts Forecasting")
-STATUS_FILE = 'generation_status.json'
+# --- CONFIG ---
+st.set_page_config(layout="wide", page_title="Spare Parts Planning Solution", initial_sidebar_state="collapsed")
+
+# --- ASSETS ---
+TECHM_LOGO = "pictures_dns/Tech_Mahindra-Logo.wine_.png"
+IIMU_LOGO = "pictures_dns/IIMU-Logo-1080px-02.webp"
+
+# --- SKU METADATA (From Reports) ---
+SKU_META = {
+    'PD2976': {'Name': 'Transmission Fluid (Standard)', 'LeadTime': 41.45},
+    'PD457':  {'Name': 'Engine Oil (Premium)', 'LeadTime': 14.25},
+    'PD1399': {'Name': 'Suspension Shocks', 'LeadTime': 28.31},
+    'PD3978': {'Name': 'Radiator/Cooling', 'LeadTime': 16.38},
+    'PD238':  {'Name': 'Transmission Fluid (Premium)', 'LeadTime': 75.04},
+    'PD7820': {'Name': 'Radiator Hose', 'LeadTime': 35.18},
+    'PD391':  {'Name': 'Brake Pads', 'LeadTime': 3.17},
+    'PD112':  {'Name': 'Engine Filters', 'LeadTime': 4.33},
+    'PD293':  {'Name': 'Wiper Blades', 'LeadTime': 8.50},
+    'PD2782': {'Name': 'Interior Trim', 'LeadTime': 9.00},
+    'PD2801': {'Name': 'Gasket Kits', 'LeadTime': 10.56}
+}
 
 # --- DATA LOADING ---
 @st.cache_data
-def load_data_v2():
-    try:
-        df = pd.read_csv('Dashboard_Database.csv')
-        
-        # --- Pre-calculate Bias & Score ---
-        # 1. Calculate Bias
-        if 'Value' in df.columns:
-            actuals = df[df['Model'] == 'Actual'][['Part', 'Location', 'Split', 'Date', 'Value']].rename(columns={'Value': 'Act'})
-            forecasts = df[df['Model'] != 'Actual'][['Part', 'Location', 'Split', 'Model', 'Date', 'Value']].rename(columns={'Value': 'Fcst'})
-            
-            merged = pd.merge(forecasts, actuals, on=['Part', 'Location', 'Split', 'Date'], how='left')
-            merged['Err'] = merged['Fcst'] - merged['Act']
-            bias_df = merged.groupby(['Part', 'Location', 'Split', 'Model'])['Err'].mean().reset_index().rename(columns={'Err': 'Bias'})
-            
-            # Merge Bias back
-            df = pd.merge(df, bias_df, on=['Part', 'Location', 'Split', 'Model'], how='left')
-            df['Bias'] = df['Bias'].fillna(0) # For Actuals or missing
-            
-            # 2. Calculate Composite Score
-            # Initialize Score
-            df['Score'] = 999.0
-            
-            try:
-                # Normalize per group (Part, Location, Split)
-                # We need to act on a summary (1 row per model) then map back
-                # Ensure Train_MAPE is in cols if it exists
-                cols = ['Part', 'Location', 'Split', 'Model', 'MAPE', 'RMSE', 'Bias']
-                if 'Train_MAPE' in df.columns:
-                    cols.append('Train_MAPE')
-                    
-                summary = df.drop_duplicates(subset=['Part', 'Location', 'Split', 'Model'])[cols]
-                summary = summary[summary['Model'] != 'Actual'] # Don't score actuals
-                
-                def calc_score(g):
-                    try:
-                        # Min-Max Normalization (Small is good for Score)
-                        # MAPE (Test)
-                        mn, mx = g['MAPE'].min(), g['MAPE'].max()
-                        d = mx - mn
-                        g['n_mape'] = (g['MAPE'] - mn) / d if d > 0 else 0
-                        
-                        # RMSE
-                        mn, mx = g['RMSE'].min(), g['RMSE'].max()
-                        d = mx - mn
-                        g['n_rmse'] = (g['RMSE'] - mn) / d if d > 0 else 0
-                        
-                        # Abs(Bias)
-                        g['abs_bias'] = g['Bias'].abs()
-                        mn, mx = g['abs_bias'].min(), g['abs_bias'].max()
-                        d = mx - mn
-                        g['n_bias'] = (g['abs_bias'] - mn) / d if d > 0 else 0
-                        
-                        # Score formula: 0.7 MAPE + 0.2 RMSE + 0.1 Bias
-                        # (User didn't ask to change formula, just to see Train MAPE)
-                        g['Score'] = 0.7 * g['n_mape'] + 0.2 * g['n_rmse'] + 0.1 * g['n_bias']
-                    except:
-                        g['Score'] = 999.0
-                    return g
+def load_db():
+    if os.path.exists('Dashboard_Database.csv'):
+        return pd.read_csv('Dashboard_Database.csv')
+    return pd.DataFrame()
 
-                if not summary.empty:
-                    # Fix: Normalize across ALL splits for the same Part/Location
-                    # This ensures a 10% MAPE in Split A is better than 50% MAPE in Split B
-                    scored = summary.groupby(['Part', 'Location']).apply(calc_score).reset_index(drop=True)
-                    scored = scored[['Part', 'Location', 'Split', 'Model', 'Score']]
-                    
-                    # Remove default score col before merge to avoid _x _y collision
-                    df = df.drop(columns=['Score'])
-                    df = pd.merge(df, scored, on=['Part', 'Location', 'Split', 'Model'], how='left')
-                    df['Score'] = df['Score'].fillna(999.0)
-            except Exception as inner_e:
-                # If scoring fails, we still return the DF, just with Score=999.0
-                print(f"Scoring Calculation Failed: {inner_e}")
-                pass
+@st.cache_data
+def load_future():
+    if os.path.exists('Future_Forecast_Database.csv'):
+        df = pd.read_csv('Future_Forecast_Database.csv')
+        df['Date'] = pd.to_datetime(df['Date'])
+        return df
+    return pd.DataFrame()
 
-        # Prepare History DF
-        history_df = pd.DataFrame()
-        if os.path.exists('history.csv'):
-            history_df = pd.read_csv('history.csv')
-            
-        return df, history_df
-    except Exception as e:
-        print(f"Data Load Error: {e}")
-        return pd.DataFrame(columns=['Part', 'Location', 'Split', 'Model', 'Date', 'Value', 'MAPE', 'RMSE', 'Bias', 'Score']), pd.DataFrame()
+def get_history_df():
+    if os.path.exists('history.csv'):
+        df = pd.read_csv('history.csv')
+        # Robust cleanup: Drop rows where Part is NaN or 'SUMMARY'
+        df = df.dropna(subset=['Part'])
+        df = df[~df['Part'].astype(str).str.contains("SUMMARY")]
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        return df
+    return pd.DataFrame()
 
-def get_progress():
-    try:
-        with open(STATUS_FILE, 'r') as f:
-            return json.load(f)
-    except:
-        return None
+# --- HELPER: EXCEL DOWNLOAD ---
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+    return output.getvalue()
 
+# --- PAGES ---
 
-# --- VISITOR TRACKING ---
-VISITOR_LOG = 'visitor_log.csv'
+def get_base64_video(video_path):
+    with open(video_path, "rb") as video_file:
+        return base64.b64encode(video_file.read()).decode('utf-8')
 
-def check_login():
-    """
-    Enforces a Google Login gate ONLY on Localhost.
-    Logs visitor ID to visitor_log.csv.
-    """
-    # 1. Check if Local
-    is_local = os.path.exists("/Users/deevyendunshukla")
-    
-    if not is_local:
-        return # Skip on Cloud
-        
-    # 2. Check Session State
-    if st.session_state.get('logged_in', False):
-        return # Already logged in
-        
-    # 2. Show Login Form
-    st.markdown("""
-    <style>
-    .login-container {
-        margin-top: 100px;
-        padding: 50px;
-        border-radius: 10px;
-        background-color: #f8f9fa;
-        text-align: center;
-        border: 1px solid #ddd;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-        st.title("🔒 Access Restricted")
-        st.write("This is a local instance. Please sign in with your Google ID to continue.")
-        
-        email = st.text_input("Google Email ID", placeholder="example@gmail.com")
-        
-        if st.button("Sign In"):
-            if email and "@" in email: # Basic validation
-                # Log it
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                
-                # Append to CSV
-                new_entry = pd.DataFrame([{'Date': timestamp, 'User': email}])
-                new_entry.to_csv(VISITOR_LOG, mode='a', header=not os.path.exists(VISITOR_LOG), index=False)
-                
-                # Set Session
-                st.session_state['logged_in'] = True
-                st.session_state['user_email'] = email
-                st.success(f"Welcome, {email}!")
-                st.rerun()
-            else:
-                st.error("Please enter a valid email address.")
-        
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Block execution if not logged in
-    st.stop()
+def landing_page():
+    # Load Font
+    font_path = "pictures_dns/Canela-Regular-Trial.otf"
+    font_css = ""
+    if os.path.exists(font_path):
+        with open(font_path, "rb") as f:
+            font_b64 = base64.b64encode(f.read()).decode()
+            font_css = f"""
+            @font-face {{
+                font-family: 'Canela';
+                src: url('data:font/otf;base64,{font_b64}') format('opentype');
+            }}
+            """
 
-def main():
-    # st.set_page_config moved to module level
+    # Video Background
+    video_path = "pictures_dns/intro3.mp4"
+    video_base64 = ""
+    if os.path.exists(video_path):
+        video_base64 = get_base64_video(video_path)
     
-    # --- AUTH CHECK (Disabled) ---
-    # check_login()
-
-    
-    # --- GLOBAL CSS (Canela Font) ---
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap');
-    
-    h1, h2, h3, h4, h5, h6, .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 {
-        font-family: 'Canela', 'Playfair Display', serif !important;
-    }
-    
-    /* Sidebar specific */
-    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
-        font-family: 'Canela', 'Playfair Display', serif !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-    
-    # --- BANNER REMOVED (Moved to bottom) ---
-    # st.markdown(..., unsafe_allow_html=True)
-    
-    st.title("Automobile Spare Parts Forecasting Dashboard")
-    
-    # Removed st.sidebar.title("Forecasting Lab") if it existed here, 
-    # but based on grep it was somewhere. Let's find where it was.
-    # Ah, grep found it, but I didn't see it in lines 120-160.
-    # It must be earlier or later.
-    # I will search for it specifically to remove it.
-    
-    df, history_df = load_data_v2()
-    
-    # --- SIDEBAR & PROGRESS ---
-    # st.sidebar.title("Forecasting Lab") # Removed
-
-    # Progress Indicator
-    prog = get_progress()
-    if prog and prog.get('percent', 0) < 100:
-        st.sidebar.info(f"**Generating Data...**\n\n{prog.get('percent')}% Complete\n\n*{prog.get('message')}*")
-        st.sidebar.progress(prog.get('percent')/100)
-        if st.sidebar.button("Refresh Progress"):
-            st.rerun()
-    elif prog:
-        st.sidebar.success("Generation Complete!")
-
-    # st.sidebar.subheader("Configuration") # Removed Duplicate Header
-    
-    if df.empty:
-        st.warning("⚠️ Data is generating... Please wait and refresh in a few minutes.")
-        
-        # Show progress bar in main area if data is missing/loading
-        prog = get_progress()
-        if prog:
-            st.info(f"**Progress:** {prog.get('percent', 0)}% Complete\n\n*{prog.get('message', '')}*")
-            st.progress(prog.get('percent', 0)/100)
-        
-        if st.button("Refresh Data"):
-            st.rerun()
-        return
-
-    # Sidebar
-    
-    # 1. About Link (Top Left)
-    if os.path.exists("pages/About.py"):
-        try:
-            st.sidebar.page_link("pages/About.py", label="About") # Removed icon
-        except KeyError:
-             st.sidebar.warning("⚠️ Restart app to enable 'About'")
-
-    # 2. Main Title (Replaced Forecasting Lab)
-    st.sidebar.markdown("<h1 style='font-size: 28px; font-weight: bold; margin-bottom: 20px;'>Modifications</h1>", unsafe_allow_html=True)
-    
-    # st.sidebar.header("Configuration") # Removed per request
-    
-    # About Link Moved to Top
-    # if os.path.exists("pages/About.py")...
-        
-    # Local-Only Controls
-    # Only show if specific user or environment indicates local dev
-    is_local = os.path.exists("/Users/deevyendunshukla")
-    
-    if is_local:
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Local Admin")
-        
-        # 1. Reload Data
-        if st.sidebar.button("Reload Data Source"):
-            load_data_v2.clear()
-            st.cache_data.clear()
-            st.rerun()
-
-        # 2. Deploy to Cloud
-        if st.sidebar.button("Deploy to Cloud 🚀"):
-            with st.sidebar.status("Deploying to GitHub...", expanded=True) as status:
-                try:
-                    # 1. Add
-                    status.write("Staging files...")
-                    subprocess.run(["git", "add", "."], check=True)
-                    
-                    # 2. Commit
-                    status.write("Committing...")
-                    result = subprocess.run(["git", "commit", "-m", "Update from Dashboard Button"], capture_output=True, text=True)
-                    if result.returncode != 0 and "nothing to commit" in result.stdout:
-                         status.write("Nothing to commit (already up to date).")
-                    elif result.returncode != 0:
-                        status.update(label="Commit Failed", state="error")
-                        st.sidebar.error(f"Commit Error: {result.stderr}")
-                        raise Exception("Commit failed")
-                    
-                    # 3. Pull (Rebase) - Critical for sync
-                    status.write("Pulling latest changes (Rebase)...")
-                    pull_res = subprocess.run(["git", "pull", "--rebase"], capture_output=True, text=True)
-                    if pull_res.returncode != 0:
-                        st.sidebar.warning(f"Pull Warning: {pull_res.stderr} - Trying to push anyway...")
-
-                    # 4. Push
-                    status.write("Pushing to Cloud...")
-                    push_res = subprocess.run(["git", "push"], capture_output=True, text=True)
-                    if push_res.returncode != 0:
-                        status.update(label="Push Failed", state="error")
-                        st.sidebar.error(f"Push Error: {push_res.stderr}")
-                        raise Exception("Push failed")
-                    
-                    status.update(label="Deployment Complete!", state="complete")
-                    st.sidebar.success("Changes pushed! Cloud update in ~2 mins.")
-                    
-                except subprocess.CalledProcessError as e:
-                    status.update(label="Deployment Failed", state="error")
-                    st.sidebar.error(f"Git Process Error: {e}")
-                except Exception as e:
-                    st.sidebar.error(f"Error: {e}")
-        
-        # 3. View Visitor Log
-        if st.sidebar.checkbox("View Visitor Log"):
-            st.sidebar.subheader("Recent Visitors")
-            if os.path.exists(VISITOR_LOG):
-                try:
-                    v_df = pd.read_csv(VISITOR_LOG)
-                    st.sidebar.dataframe(v_df.sort_values('Date', ascending=False).head(10), hide_index=True)
-                except Exception as e:
-                    st.sidebar.error("Log read error")
-            else:
-                st.sidebar.info("No visitors yet.")
-    
-    # ETS Control
-    
-    # ETS Control
-    enable_ets = st.sidebar.checkbox("Enable ETS (Holt-Winters)", value=False)
-    if not enable_ets:
-        df = df[df['Model'] != 'ETS']
-    
-    # 1. Part & Location
-    parts = df['Part'].unique()
-    sel_part = st.sidebar.selectbox("Spare Part", parts)
-    
-    locs = df[df['Part'] == sel_part]['Location'].unique()
-    locs = df[df['Part'] == sel_part]['Location'].unique()
-    sel_loc = st.sidebar.selectbox("Location", locs)
-    
-    # State for auto-selection
-    if 'last_part' not in st.session_state:
-        st.session_state['last_part'] = sel_part
-    if 'last_loc' not in st.session_state:
-        st.session_state['last_loc'] = sel_loc
-
-    # --- OPTIMIZATION INSIGHT ---
-    # Find the best split/model combination globally based on Weighted Score
-    best_fit_split = None
-    best_fit_model = None
-    best_fit_score = 999.0
-    best_fit_mape = 0.0 # Just for display
-    best_fit_train_mape = 0.0 # For display
-    
-    # Filter for this part/loc regardless of split
-    # Ensure Score exists
-    if 'Score' not in df.columns:
-        df['Score'] = 999.0
-        
-    global_subset = df[(df['Part'] == sel_part) & (df['Location'] == sel_loc) & (df['Model'] != 'Actual')]
-    
-    for _, row in global_subset.iterrows():
-        # Iterate unique combinations
-        if row['Score'] < best_fit_score:
-            best_fit_score = row['Score']
-            best_fit_model = row['Model']
-            best_fit_split = row['Split']
-            best_fit_split = row['Split']
-            best_fit_mape = row['MAPE']
-            best_fit_train_mape = row['Train_MAPE'] if 'Train_MAPE' in row else 0.0
-
-    # Auto-switch to Best Fit if Part/Loc changed
-    if sel_part != st.session_state['last_part'] or sel_loc != st.session_state['last_loc']:
-        if best_fit_split:
-            st.session_state['sel_split_state'] = best_fit_split
-            st.toast(f"🔄 Auto-switched to Best Fit: {best_fit_split}", icon="✨")
-        st.session_state['last_part'] = sel_part
-        st.session_state['last_loc'] = sel_loc
-        # Rerun to ensure the Radio button picks up the new state immediately if needed, 
-        # though setting state before widget might be enough if we use key/index correctly.
-        # But st.radio index comes from logic below. Let's just let it flow.
-            
-    if best_fit_split:
-        st.sidebar.markdown("---")
-    if best_fit_split:
-        st.sidebar.markdown("---")
-        st.sidebar.info(f"✨ **Recommendation**\n\nOptimal Strategy: **{best_fit_split}**\nModel: **{best_fit_model}**\nTest MAPE: **{best_fit_mape:.2%}**\nTrain MAPE: **{best_fit_train_mape:.2%}**\n*(Based on Composite Score)*")
-        if st.sidebar.button("Apply Best Fit"):
-            st.session_state['sel_split_state'] = best_fit_split
-            st.rerun()
-
-    # 2. Split Strategy
-    splits = df['Split'].unique()
-    # Handle state override
-    default_split_idx = 0
-    if best_fit_split and 'sel_split_state' not in st.session_state:
-         # Initial load default
-         if best_fit_split in splits:
-             default_split_idx = list(splits).index(best_fit_split)
-    elif 'sel_split_state' in st.session_state and st.session_state['sel_split_state'] in splits:
-         default_split_idx = list(splits).index(st.session_state['sel_split_state'])
-         
-    # Key is important to sync with session state, but we are manually managing index.
-    # Actually, best way: output the widget, then if user changes it, update state?
-    # Or just use key='sel_split_state' if we trust it?
-    # Mixing manual index and key is tricky. Let's stick to index control.
-    def on_split_change():
-        st.session_state['sel_split_state'] = st.session_state.split_radio
-        
-    sel_split = st.sidebar.radio("Training Strategy", splits, index=default_split_idx, key='split_radio', on_change=on_split_change)
-    
-    # Filter Data
-    subset = df[
-        (df['Part'] == sel_part) & 
-        (df['Location'] == sel_loc) & 
-        (df['Split'] == sel_split)
-    ]
-    
-    # 3. Model Selection
-    avail_models = [m for m in subset['Model'].unique() if m != 'Actual']
-    
-    # Safe Defaults
-    wanted_defaults = ['SARIMA', 'Weighted Ensemble', 'Prophet', 'XGBoost', 'N-HiTS', 'ETS']
-    valid_defaults = [m for m in wanted_defaults if m in avail_models]
-    if not valid_defaults and avail_models:
-        valid_defaults = [avail_models[0]]
-        
-    sel_models = st.sidebar.multiselect("Select Models to Compare", avail_models, default=valid_defaults)
-    
-    # --- METRICS SECTION ---
-    st.subheader(f"Performance Metrics ({sel_split})")
-    
-    # Calculate Best Overall based on Score
-    best_overall_score = 999.0
-    best_overall_model = ""
-    best_overall_mape = 0.0
-    
-    for m in avail_models:
-        m_subset = subset[subset['Model'] == m]
-        if not m_subset.empty:
-            curr_score = m_subset.iloc[0]['Score'] if 'Score' in m_subset.columns else 999.0
-            if curr_score < best_overall_score:
-                best_overall_score = curr_score
-                best_overall_model = m
-                best_overall_mape = m_subset.iloc[0]['MAPE']
-    
-    if best_overall_model:
-        # Check if this local winner is also the global best fit
-        is_global_best = (best_overall_model == best_fit_model) and (sel_split == best_fit_split)
-        
-        if is_global_best:
-            st.success(f"**Global Winner:** **{best_overall_model}** yielded the best results overall using the **{sel_split}** training/testing period. (MAPE: {best_overall_mape:.2%})")
-        else:
-            global_hint = f" (Global Winner is {best_fit_model} in {best_fit_split})" if best_fit_split else ""
-            st.warning(f"**Split Winner:** **{best_overall_model}** is the best in this split ({sel_split}).{global_hint}")
-
-    # --- CSS STYLES ---
-    # 1. Dynamic Background based on Global Best Status
-    bg_color = "linear-gradient(to bottom, #d4edda, #ffffff)" if is_global_best else "linear-gradient(to bottom, #fff3cd, #ffffff)"
-    
+    # CSS for Fullscreen & Buttons
     st.markdown(f"""
     <style>
-    .stApp {{
-        background: {bg_color};
-    }}
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+        
+        {font_css}
+        
+        /* Global Reset for Landing Only */
+        .stApp {{
+            background-color: transparent !important;
+        }}
+        
+        .main .block-container {{
+            padding: 0 !important;
+            margin: 0 !important;
+            max-width: 100% !important;
+        }}
+        
+        /* Video Background */
+        #myVideo {{
+            position: fixed;
+            right: 0;
+            bottom: 0;
+            min-width: 100%;
+            min-height: 100%;
+            z-index: -1;
+            object-fit: cover;
+            opacity: 0.45; /* Increased transparency */
+        }}
+        
+        /* Overlay Container */
+        .landing-container {{
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 1;
+            width: 100%;
+        }}
+        
+        /* Texts */
+        .landing-subtitle {{
+            font-family: 'Playfair Display', 'Canela', serif;
+            font-size: 2vw;
+            color: #333333; /* Dark Grey */
+            margin-bottom: 0;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }}
+        
+        /* Global Font Override */
+        html, body, [class*="css"], font, div, p, span, h1, h2, h3, h4, h5, h6, .stMarkdown, .stButton button, .stSelectbox, .stNumberInput, * {{
+            font-family: 'Canela', 'Playfair Display', serif !important;
+        }}
+        
+        /* EXCEPTION: Home Buttons (Default Font) */
+        div.stButton > button[kind="primary"], div.stButton > button[kind="secondary"] {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol" !important;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }}
+
+        .landing-title {{
+            font-family: 'Playfair Display', 'Canela', serif;
+            font-size: 2.5vw; /* Reduced size further */
+            color: #000000;
+            margin-top: 0;
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 12px 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-shadow: none;
+            line-height: 1.2;
+            font-weight: 700;
+            white-space: nowrap;
+        }}
+        
+        /* Buttons Custom Styles */
+        div.stButton > button[kind="primary"] {{
+            background: #D32F2F;
+            border: 2px solid #000000; /* Black Border */
+            color: #FFFFFF !important; /* White Text */
+            font-size: 1.2rem;
+            padding: 0.75rem 2rem;
+            border-radius: 30px;
+            backdrop-filter: blur(5px);
+            transition: all 0.3s ease;
+            box-shadow: 0 0 20px rgba(211, 47, 47, 0.6), 0 0 10px rgba(211, 47, 47, 0.4);
+            font-weight: 600;
+        }}
+        div.stButton > button[kind="primary"]:hover {{
+            box-shadow: 0 0 35px rgba(211, 47, 47, 0.8), 0 0 60px rgba(211, 47, 47, 0.6); /* Super Glow */
+            border-color: #FF5252;
+            transform: scale(1.05);
+            color: #FFFFFF !important;
+            background: #E53935;
+        }}
+        
+        div.stButton > button[kind="secondary"] {{
+            background: #FDD835; /* Yellow 600 */
+            border: 2px solid #000000; /* Black Border */
+            color: #000000 !important; /* Black Text */
+            font-size: 1.25rem;
+            padding: 1rem 2.5rem;
+            border-radius: 30px;
+            font-weight: 600;
+            box-shadow: 0 0 20px rgba(253, 216, 53, 0.6);
+            transition: all 0.3s ease;
+        }}
+        div.stButton > button[kind="secondary"]:hover {{
+            background: #FFEE58;
+            transform: scale(1.05);
+            box-shadow: 0 0 35px rgba(253, 216, 53, 0.8), 0 0 60px rgba(253, 216, 53, 0.6); /* Super Glow */
+            color: #000000 !important; /* Keep Text Black */
+            border-color: #000000; /* Keep Border Black */
+        }}
+
     </style>
+    
+    <!-- Video Element -->
+    <video autoplay loop muted playsinline id="myVideo">
+        <source src="data:video/mp4;base64,{video_base64}" type="video/mp4">
+    </video>
+    
+    <!-- Overlay Content -->
+    <div class="landing-container">
+        <h1 class="landing-title">Automobile Spare Parts Forecasting Solution</h1>
+    </div>
     """, unsafe_allow_html=True)
     
-    # 2. Static Styles (Metric Cards, etc.)
+    # Button Logic - Center alignment
+    st.markdown("<div style='height: 45vh'></div>", unsafe_allow_html=True)
+    
+    # Corrected Ratios: Spacers=1, Buttons=2 (Wider) to prevent stacking
+    c1, c2, c3, c4 = st.columns([1, 2, 2, 1])
+    
+    with c2:
+        # Dashboard Button
+        if st.button("OPEN DASHBOARD", type="primary", use_container_width=True):
+            st.session_state['page'] = 'dashboard'
+            st.rerun()
+            
+    with c3:
+        # Forecasting Tool
+        if st.button("FORECASTING TOOL", type="secondary", use_container_width=True):
+            st.session_state['page'] = 'tool'
+            st.rerun()
+
+
+
+def generate_seasonal_lead_time(forecast_series, base_lt):
+    # Heuristic: Lead times increase during high demand (Oct-Dec) and Monsoon (July)
+    # Norm: Lead(m) = Base * (1 + Factor).
+    # Since we don't have true seasonality data, we use the demand volume itself as a proxy for supply chain stress.
+    # Scaled 0 to 1 based on prediction range.
+    if forecast_series.empty:
+        return []
+    
+    vals = forecast_series.values
+    min_v, max_v = vals.min(), vals.max()
+    if max_v == min_v:
+        norm = np.zeros(len(vals))
+    else:
+        norm = (vals - min_v) / (max_v - min_v)
+        
+    # Scale factor: Max 20% increase in lead time for peak demand
+    seasonal_lt = base_lt * (1 + 0.2 * norm)
+    return seasonal_lt
+
+def get_best_model_info(db_df, part, loc):
+    # Filter for SKU/Loc
+    subset = db_df[(db_df['Part'] == part) & (db_df['Location'] == loc) & (db_df['Model'] != 'Actual')]
+    if subset.empty:
+        return None
+    
+def get_best_model_info(db_df, part, loc):
+    # Filter for SKU/Loc
+    subset = db_df[(db_df['Part'] == part) & (db_df['Location'] == loc)]
+    
+    if subset.empty:
+        return None
+        
+    # Separate Actuals and Models
+    actuals = subset[subset['Model'] == 'Actual'][['Split', 'Date', 'Value']].rename(columns={'Value': 'Actual'})
+    models_df = subset[subset['Model'] != 'Actual']
+    
+    if models_df.empty or actuals.empty:
+        return None
+        
+    # Merge to calculate Bias if missing
+    # We need to calculate metrics per (Split, Model)
+    # Group by Split, Model
+    
+    leaderboard = []
+    
+    for (split, model), group in models_df.groupby(['Split', 'Model']):
+        # Get corresponding actuals for this split
+        split_actuals = actuals[actuals['Split'] == split]
+        
+        # Merge on Date
+        merged = pd.merge(group, split_actuals, on=['Date'], how='inner')
+        
+        if merged.empty:
+            continue
+            
+        # Calculate Metrics
+        # RMSE
+        rmse = np.sqrt(mean_squared_error(merged['Actual'], merged['Value']))
+        
+        # MAPE
+        # Handle division by zero
+        actual_safe = merged['Actual'].replace(0, 0.001)
+        mape = np.mean(np.abs((merged['Actual'] - merged['Value']) / actual_safe))
+        
+        # Bias (Mean Error) -> Forecast - Actual
+        bias = np.mean(merged['Value'] - merged['Actual'])
+        
+        leaderboard.append({
+            'Split': split,
+            'Model': model,
+            'RMSE': rmse,
+            'MAPE': mape,
+            'Bias': bias, # Keep raw bias for display
+            'AbsBias': abs(bias) # Use absolute for scoring magnitude
+        })
+        
+    if not leaderboard:
+        return None
+        
+    lb_df = pd.DataFrame(leaderboard)
+    
+    # --- COMPOSITE SCORE CALCULATION ---
+    # Normalize Metrics (Lower is better for all)
+    # Score = 0.4*Norm_MAPE + 0.4*Norm_RMSE + 0.2*Norm_Bias
+    
+    def normalize(series):
+        if series.max() == series.min():
+            return np.zeros(len(series))
+        return (series - series.min()) / (series.max() - series.min())
+        
+    lb_df['Norm_RMSE'] = normalize(lb_df['RMSE'])
+    lb_df['Norm_MAPE'] = normalize(lb_df['MAPE'])
+    lb_df['Norm_Bias'] = normalize(lb_df['AbsBias']) # Normalize Absolute Bias
+    
+    lb_df['Score'] = (0.4 * lb_df['Norm_RMSE']) + (0.4 * lb_df['Norm_MAPE']) + (0.2 * lb_df['Norm_Bias'])
+    
+    # Find Best
+    best_row = lb_df.loc[lb_df['Score'].idxmin()]
+    
+    return best_row
+
+def render_navbar():
+    st.markdown("<br>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        if st.button("Home", use_container_width=True):
+            st.session_state['page'] = 'landing'
+            st.rerun()
+    with c2:
+        if st.button("Dashboard", use_container_width=True):
+            st.session_state['page'] = 'dashboard'
+            st.rerun()
+    with c3:
+        if st.button("Forecasting Tool", use_container_width=True):
+            st.session_state['page'] = 'tool'
+            st.rerun()
+    with c4:
+        if st.button("About", use_container_width=True):
+            st.session_state['page'] = 'about'
+            st.rerun()
+    st.divider()
+
+def dashboard_page():
+    render_navbar()
+    # --- HEADER ---
     st.markdown("""
     <style>
-    /* Ensure sidebar stays clean */
-    [data-testid="stSidebar"] {
-        background-color: #f8f9fa;
-    }
-    .metric-container {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin-bottom: 20px;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 15px;
-        width: 220px;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-        text-align: center;
-        border: 1px solid #ddd;
-    }
-    .winner-card {
-        background-color: #d4edda !important; 
-        border: 2px solid #28a745 !important;
-        color: #155724 !important;
-    }
-    .metric-title {
-        font-size: 16px;
-        font-weight: bold;
-        margin-bottom: 5px;
-    }
-    .metric-value {
-        font-size: 24px;
-        font-weight: bold;
-        margin: 5px 0;
-    }
-    .metric-sub {
-        font-size: 14px;
-        color: #555;
-    }
-    .winner-card .metric-sub {
-        color: #155724;
+    /* Hover Glow for Download Button */
+    .stDownloadButton > button:hover {
+        box-shadow: 0 0 15px rgba(46, 204, 113, 0.8), 0 0 30px rgba(46, 204, 113, 0.4) !important;
+        border-color: #2ecc71 !important;
+        color: #000000 !important;
+        background-color: #ffffff !important;
+        transition: all 0.3s ease-in-out;
     }
     </style>
     """, unsafe_allow_html=True)
+    
+    st.markdown("### AI/ML Spare Parts Planning Solution")
+    st.divider()
 
-    # --- HTML METRICS ---
-    html_cards = '<div class="metric-container">'
+    df = load_db()
+    future_df = load_future()
+    hist_df = get_history_df()
     
-    for i, model in enumerate(sel_models):
-        m_data = subset[subset['Model'] == model]
-        if m_data.empty: continue
-        
-        # Metrics are repeated in rows, just take first
-        mape = m_data.iloc[0]['MAPE']
-        rmse = m_data.iloc[0]['RMSE']
-        # Use pre-calculated Bias and Score
-        bias = m_data.iloc[0]['Bias'] if 'Bias' in m_data.columns else 0.0
-        score = m_data.iloc[0]['Score'] if 'Score' in m_data.columns else 0.0
-        train_mape = m_data.iloc[0]['Train_MAPE'] if 'Train_MAPE' in m_data.columns else 0.0
-
-        if model == 'Weighted Ensemble' and mape >= 0.99:
-            continue
-
-        is_winner = (model == best_overall_model)
-        card_class = "metric-card winner-card" if is_winner else "metric-card"
-        trophy = ""
-        
-        html_cards += f"""
-<div class="{card_class}">
-    <div class="metric-title">{trophy}{model}</div>
-    <div class="metric-value" style="font-size: 20px;">Test: {mape:.2%}</div>
-    <div class="metric-sub" style="font-weight:bold; margin-bottom:5px;">Train: {train_mape:.2%}</div>
-    <div class="metric-sub">RMSE: {rmse:.1f}</div>
-    <div class="metric-sub">Bias: {bias:.1f}</div>
-    <div class="metric-sub" style="font-size:12px; margin-top:5px">Score: {score:.3f}</div>
-</div>
-"""
-    
-    html_cards += '</div>'
-    st.markdown(html_cards, unsafe_allow_html=True)
-
-    # --- CHART SECTION ---
-    st.subheader("Forecast for Testing Period")
-    
-    # Time Range Selection
-    view_options = ["Test Period Only"]
-    if not history_df.empty:
-        view_options.append("Full History (2021-2024)")
-    
-    view_sel = st.sidebar.selectbox("Chart History", view_options, index=0) # Sidebar or Main? Prompt said "include a dropdown option" in chart section
-    # Let's put it right here above chart for context, sidebar is getting crowded.
-    # Actually sidebar is standard for controls, but "in Forecast for Testing Period section" implies locality.
-    # Let's use cols.
-    
-    c_chart_ctrl, _ = st.columns([1, 3])
-    with c_chart_ctrl:
-        # Override sidebar selection if we want local control
-        # Actually, let's just make it a local widget
-        chart_view = st.selectbox("Time Range", view_options, key='chart_hist_view')
-
-    fig = go.Figure()
-    
-    # 1. Actuals
-    if "Full History" in chart_view and not history_df.empty:
-        # Filter History
-        hist_sub = history_df[
-            (history_df['Part'] == sel_part) & 
-            (history_df['Location'] == sel_loc)
-        ].sort_values('Date')
-        
-        fig.add_trace(go.Scatter(
-            x=hist_sub['Date'], y=hist_sub['Value'],
-            mode='lines', name='Actual Demand (Full History)',
-            line=dict(color='black', width=2)
-        ))
+    # --- 1. SELECTION ---
+    # Use simple columns to ensure side-by-side (50/50 split)
+    if not df.empty:
+        parts = df['Part'].unique()
+        c_sel1, c_sel2 = st.columns(2)
+        with c_sel1:
+            sel_part = st.selectbox("Select SKU", parts)
+        with c_sel2:
+            locs = df[df['Part'] == sel_part]['Location'].unique()
+            sel_loc = st.selectbox("Select Location", locs)
     else:
-        # Default: Subset Actuals
-        actuals = subset[subset['Model'] == 'Actual'].sort_values('Date')
-        fig.add_trace(go.Scatter(
-            x=actuals['Date'], y=actuals['Value'],
-            mode='lines+markers', name='Actual Demand',
-            line=dict(color='black', width=3)
-        ))
-    
-    # 2. Models
-    colors = ['#FF5733', '#33FF57', '#3357FF', '#FF33F6', '#FFC300', '#00BCD4', '#9C27B0']
-    for i, model in enumerate(sel_models):
-        m_data = subset[subset['Model'] == model].sort_values('Date')
-        if m_data.empty: continue
-        
-        # Get metrics for label
-        mape_val = m_data.iloc[0]['MAPE']
-        train_mape_val = m_data.iloc[0]['Train_MAPE'] if 'Train_MAPE' in m_data.columns else 0.0
-        
-        is_winner = (model == best_overall_model)
-        
-        # Customize Trace Name with Metrics
-        if train_mape_val > 0:
-            label = f"{model} (Train: {train_mape_val:.1%} | Test: {mape_val:.1%})"
-        else:
-            label = f"{model} (Test MAPE: {mape_val:.1%})"
-        
-        if is_winner:
-            # Highlight Winner
-            opacity = 1.0
-            width = 4
-            color = '#28a745' # Success Green
-            dash = 'solid'
-            # label = f"🏆 {label}" # Removed emoji per request
-        else:
-            # Dim others
-            opacity = 0.3
-            width = 1.5
-            color = '#cccccc' # Light Grey
-            base_color = colors[i % len(colors)]
-            color = base_color
-            dash = 'dot'
-        
-        fig.add_trace(go.Scatter(
-            x=m_data['Date'], y=m_data['Value'],
-            mode='lines', name=label,
-            line=dict(color=color, width=width, dash=dash),
-            opacity=opacity
-        ))
-        
-    fig.update_layout(height=500, xaxis_title="Date", yaxis_title="Demand")
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption("*Note: 'Train' reflects in-sample fitted error (Overfitting Check). 'Test' reflects out-of-sample forecast error.*")
-    
-    # --- RAW DATA ---
-    with st.expander("View Raw Data"):
-        st.dataframe(subset)
+        st.error("Data not found.")
+        return
 
-    # --- 2025 OUTLOOK SECTION ---
-    st.markdown("---")
-    st.header("2025 Demand Projection")
+    st.markdown("<br>", unsafe_allow_html=True)
     
-    FUTURE_DB = 'Future_Forecast_Database.csv'
-    if os.path.exists(FUTURE_DB):
-        try:
-            future_df = pd.read_csv(FUTURE_DB)
-            # Filter for Part, Location AND the determined Global Winner Model
-            # This ensures consistency with the banner.
-            winner_model_name = best_overall_model
-            f_sub = future_df[
-                (future_df['Part'] == sel_part) & 
-                (future_df['Location'] == sel_loc) & 
-                (future_df['Model'] == winner_model_name)
-            ].sort_values('Date')
+    # --- 2. DETAILS HEADER ---
+    meta = SKU_META.get(sel_part, {'Name': 'Unknown Part', 'LeadTime': 0})
+    st.markdown(f"<h1 style='text-align: center; color: #2c3e50; font-family: Canela;'>{sel_part} - {meta['Name']}</h1>", unsafe_allow_html=True)
+    st.divider()
+
+    # --- LOGIC: BEST MODEL SELECTION ---
+    best_info = get_best_model_info(df, sel_part, sel_loc)
+    
+    if best_info is None:
+        st.warning("Not enough data to determine best model.")
+        best_model_name = "Weighted Ensemble" # Default
+        best_split_name = "Split 3.5y/0.5y"
+    else:
+        best_model_name = best_info['Model']
+        best_split_name = best_info['Split']
+        best_mape = best_info['MAPE']
+        best_rmse = best_info['RMSE']
+        best_bias = best_info.get('Bias', 0)
+
+    # --- 3. GRAPH 1: 2025 FORECAST (EXECUTIVE VIEW) ---
+    st.markdown(f"<h2 style='text-align: center; font-family: Canela;'>2025 Forecast</h2>", unsafe_allow_html=True)
+    
+    # Fetch Future Data for Best Model
+    f_sub = future_df[(future_df['Part'] == sel_part) & 
+                      (future_df['Location'] == sel_loc) & 
+                      (future_df['Model'] == best_model_name)]
+    
+    # Fallback logic if specific model missing
+    if f_sub.empty:
+        f_sub = future_df[(future_df['Part'] == sel_part) & (future_df['Location'] == sel_loc)]
+        if not f_sub.empty:
+            f_sub = f_sub[f_sub['Model'] == f_sub['Model'].iloc[0]] # Take first available
+    
+    if not f_sub.empty:
+        f_sub = f_sub.sort_values('Date')
+        
+        # Calculate Variable Lead Time
+        seasonal_lead_times = generate_seasonal_lead_time(f_sub['Value'], meta['LeadTime'])
+        f_sub['LeadTime_Var'] = seasonal_lead_times
+        
+        # Metrics for Tiles
+        total_demand = f_sub['Value'].sum()
+        avg_lead_time_year = f_sub['LeadTime_Var'].mean()
+        
+        # Big Rounded Rectangles
+        xm1, xm2 = st.columns(2)
+        with xm1:
+            st.markdown(f"""
+            <div style="background-color: #e8f5e9; padding: 10px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <h3 style="color: #2e7d32; margin:0; font-family: Canela; font-size: 1.2em;">Yearly Demand Forecast</h3>
+                <h1 style="color: #1b5e20; margin:0; font-size: 2em; font-family: Canela;">{total_demand:,.0f}</h1>
+                <p style="color: #4caf50; margin:0; font-size: 0.9em;">Units (2025)</p>
+            </div>
+            """, unsafe_allow_html=True)
+        with xm2:
+            st.markdown(f"""
+            <div style="background-color: #fff3e0; padding: 10px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                <h3 style="color: #ef6c00; margin:0; font-family: Canela; font-size: 1.2em;">Avg. Lead Time</h3>
+                <h1 style="color: #e65100; margin:0; font-size: 2em; font-family: Canela;">{avg_lead_time_year:.1f}</h1>
+                <p style="color: #ff9800; margin:0; font-size: 0.9em;">Days (Variable)</p>
+            </div>
+            """, unsafe_allow_html=True)
             
-            if not f_sub.empty:
-                # Prepare History (Actuals)
-                # We need full history for context
-                # We need full history for context
-                # Get from 'df' (the loaded dashboard db) -> filter Actuals
-                # But 'df' only has Split data. We might have gaps if splits don't cover everything or overlap.
-                # Ideally we want the "Latest" Split's Actuals?
-                # Let's take 'Actual' rows from the 'subset' (current view) but that depends on selected split.
-                # To show nice history, we should probably take Actuals from ALL available splits in df, deduplicated.
-                
-                # Fetch all actuals for this Part/Loc from generated DB
-                all_actuals = df[(df['Part'] == sel_part) & (df['Location'] == sel_loc) & (df['Model'] == 'Actual')]
-                all_actuals = all_actuals.drop_duplicates(subset=['Date']).sort_values('Date')
-                
-                # Combine
-                f_sub['Date'] = pd.to_datetime(f_sub['Date'])
-                all_actuals['Date'] = pd.to_datetime(all_actuals['Date'])
-                
-                # Stats
-                total_2025 = f_sub['Value'].sum()
-                
-                # 2024 Total (from Actuals)
-                mask_2024 = (all_actuals['Date'] >= '2024-01-01') & (all_actuals['Date'] <= '2024-12-31')
-                total_2024 = all_actuals[mask_2024]['Value'].sum()
-                
-                growth = 0.0
-                if total_2024 > 0:
-                    growth = (total_2025 - total_2024) / total_2024
-                
-                # Metric Tiles
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Selected Best Global Model", winner_model_name)
-                c2.metric("Projected Demand (2025)", f"{int(total_2025):,}")
-                c3.metric("Growth vs 2024", f"{growth:+.1%}")
-                
-                # Chart
-                fig2 = go.Figure()
-                
-                # 1. History (Actuals)
-                fig2.add_trace(go.Scatter(
-                    x=all_actuals['Date'], y=all_actuals['Value'],
-                    mode='lines', name='Historical Demand (Actual)',
-                    line=dict(color='black', width=2)
-                ))
-                
-                # 2. Recent Test Forecast (Context)
-                # Find the test predictions for this model from the DB to show "recent performance"
-                # We prioritize the latest split to show the immediate past
-                # Filter df for this model
-                model_past = df[(df['Part'] == sel_part) & (df['Location'] == sel_loc) & (df['Model'] == winner_model_name)]
-                
-                # Pick the split that ends latest (max date)
-                if not model_past.empty:
-                    # Find split with max date
-                    latest_split = model_past.loc[model_past['Date'].idxmax()]['Split']
-                    recent_preds = model_past[model_past['Split'] == latest_split].sort_values('Date')
-                    
-                    fig2.add_trace(go.Scatter(
-                        x=recent_preds['Date'], y=recent_preds['Value'],
-                        mode='lines', name=f'Recent Test Forecast ({winner_model_name})',
-                        line=dict(color='#28a745', width=2, dash='dot'),
-                        opacity=0.7
-                    ))
-                    
-                    # Connect lines: Add last point of recent_preds to start of f_sub
-                    if not recent_preds.empty and not f_sub.empty:
-                        last_pt = recent_preds.iloc[-1]
-                        # Create a row. Ensure columns match or just construct df
-                        # We just need Date and Value for the chart
-                        connector = pd.DataFrame({
-                            'Date': [last_pt['Date']], 
-                            'Value': [last_pt['Value']]
-                        })
-                        f_sub = pd.concat([connector, f_sub], axis=0)
+        st.markdown("<br>", unsafe_allow_html=True)
 
-                # 3. 2025 Forecast
-                fig2.add_trace(go.Scatter(
-                    x=f_sub['Date'], y=f_sub['Value'],
-                    mode='lines+markers', name=f'2025 Forecast ({winner_model_name})',
-                    line=dict(color='#28a745', width=3, dash='solid')
-                ))
+        # Plot: Continuous Line Chart
+        
+        # --- Date Range Logic ---
+        st.markdown("<br>", unsafe_allow_html=True)
+        view_opt = st.radio("Select History View Range:", ["2024 - 2025", "2021 - 2025"], index=0, horizontal=True)
+        
+        h_sub = hist_df[(hist_df['Part'] == sel_part) & (hist_df['Location'] == sel_loc)].sort_values('Date')
+        
+        if view_opt == "2024 - 2025":
+            h_sub = h_sub[h_sub['Date'] >= '2024-01-01']
+        
+        if not h_sub.empty:
+            last_hist_date = h_sub['Date'].iloc[-1]
+            last_hist_val = h_sub['Value'].iloc[-1]
+            f_dates = [last_hist_date] + list(f_sub['Date'])
+            f_vals = [last_hist_val] + list(f_sub['Value'])
+        else:
+            f_dates = f_sub['Date'].tolist()
+            f_vals = f_sub['Value'].tolist()
+
+        # ECharts Implementation (Option 2) for Smooth Animation
+        
+        # Define missing variables
+        h_dates = h_sub['Date'].tolist()
+        h_vals = h_sub['Value'].tolist()
+        
+        # 1. Prepare Data
+        # X-Axis: Unified Timeline
+        # h_dates ends at T
+        # f_dates starts at T
+        
+        # Convert to string for ECharts
+        x_data = [d.strftime('%Y-%m-%d') for d in h_dates]
+        # Append forecast dates (excluding the overlap start if it duplicates standard logic, 
+        # but our f_dates logic includes overlap at index 0. So we slice [1:])
+        if len(f_dates) > 1:
+            x_data += [d.strftime('%Y-%m-%d') for d in f_dates[1:]]
+        
+        # Y-Axis Series
+        # History: defined up to T, then null
+        # Forecast: null up to T, then defined
+        
+        # Pad History
+        # Length of forecast part to add is len(f_dates) - 1
+        future_len = len(f_dates) - 1 if len(f_dates) > 0 else 0
+        y_hist = h_vals + [None] * future_len
+        
+        # Pad Forecast
+        # Needs to align at T (index len(h_dates)-1)
+        # So we pad with None for len(h_dates)-1 positions
+        padding_len = len(h_dates) - 1 if len(h_dates) > 0 else 0
+        y_forecast = [None] * padding_len + f_vals
+        
+        # 2. Define Options
+        options = {
+            "title": {
+                "text": "2025 Forecast Demand", 
+                "left": "center", 
+                "textStyle": {"fontFamily": "Canela", "fontSize": 24, "color": "#000"}
+            },
+            "legend": {
+                "data": ["History", f"Forecast ({best_model_name})"],
+                "bottom": "0",
+                "textStyle": {"fontFamily": "Canela", "fontSize": 14}
+            },
+            "tooltip": {
+                "trigger": "axis",
+                "axisPointer": {"type": "cross"}
+            },
+            "grid": {"left": "3%", "right": "4%", "bottom": "10%", "containLabel": True},
+            "xAxis": {
+                "type": "category",
+                "boundaryGap": False,
+                "data": x_data,
+                "axisLine": {"lineStyle": {"color": "#ccc"}},
+                "axisLabel": {"color": "#333"}
+            },
+            "yAxis": {
+                "type": "value",
+                "axisLine": {"show": False},
+                "axisTick": {"show": False},
+                "splitLine": {"show": True, "lineStyle": {"type": "dashed", "color": "#eee"}},
+                "axisLabel": {"color": "#333"}
+            },
+            "series": [
+                {
+                    "name": "History",
+                    "type": "line",
+                    "data": y_hist,
+                    "smooth": True,
+                    "showSymbol": False,
+                    "lineStyle": {"width": 3, "color": "black"},
+                    "itemStyle": {"color": "black"},
+                    "animationDuration": 3000,
+                    "animationEasing": "linear"
+                },
+                {
+                    "name": f"Forecast ({best_model_name})",
+                    "type": "line",
+                    "data": y_forecast,
+                    "smooth": True,
+                    "showSymbol": True,
+                    "symbol": "circle",
+                    "symbolSize": 8,
+                    "lineStyle": {"width": 4, "color": "#2ecc71"},
+                    "itemStyle": {"color": "#2ecc71", "borderColor": "#fff", "borderWidth": 2},
+                    "animationDuration": 2000,
+                    "animationEasing": "linear",
+                    "animationDelay": 3000 # Starts after History (3000ms)
+                }
+            ],
+            "animation": True
+        }
+        
+        # Force re-render with unique key to ensure animation plays every time
+        st_echarts(options=options, height="500px", key=f"dash_chart_{uuid.uuid4()}")
+        
+        # Download Excel
+        dl_data = pd.DataFrame({
+            'Spare Part ID': [sel_part] * len(f_sub),
+            'Location': [sel_loc] * len(f_sub),
+            'Month': f_sub['Date'].dt.strftime('%B %Y'),
+            'Forecasted Demand': f_sub['Value'].round(2),
+            'Variable Lead Time (Days)': f_sub['LeadTime_Var'].round(2)
+        })
+        
+        # Use Centered Button
+        _, c_dl, _ = st.columns([1, 1, 1])
+        with c_dl:
+            excel_file = to_excel(dl_data)
+            st.download_button(
+                label="Download Forecast Data (Excel)",
+                data=excel_file,
+                file_name=f"Forecast_2025_{sel_part}_{sel_loc}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+    st.divider()
+
+    st.divider()
+
+    # --- 4. GRAPH 2: TRAINING & TESTING (EDUCATIONAL) ---
+    st.markdown(f"<h2 style='text-align: center; font-family: Canela;'>Training & Testing Data Analysis</h2>", unsafe_allow_html=True)
+    
+    with st.expander("View Model Performance Details", expanded=False):
+        st.markdown(f"**Best Performing Model:** {best_model_name} on {best_split_name}")
+        
+        # Metrics Row
+        m1, m2, m3 = st.columns(3)
+        
+        # Helper for color
+        def metric_tile(label, value, color="#fafafa", text_color="#333"):
+            return f'''
+            <div style="background-color: {color}; padding: 15px; border-radius: 10px; text-align: center; border: 1px solid #ddd;">
+                <small style="color: {text_color}; font-weight: bold;">{label}</small>
+                <h2 style="color: {text_color}; margin: 5px 0;">{value}</h2>
+            </div>
+            '''
+        
+        if best_info is not None:
+            with m1: st.markdown(metric_tile("MAPE", f"{best_mape:.2%}", "#e8f5e9", "#2e7d32"), unsafe_allow_html=True) # Green
+            with m2: st.markdown(metric_tile("RMSE", f"{best_rmse:.2f}", "#fff3e0", "#ef6c00"), unsafe_allow_html=True) # Amber
+            with m3: st.markdown(metric_tile("Bias", f"{best_bias:.2f}", "#fff3e0", "#ef6c00"), unsafe_allow_html=True) # Amber
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Comparison Chart
+        # Load validation data from Dashboard_Database for this Split
+        val_df = df[(df['Part'] == sel_part) & 
+                    (df['Location'] == sel_loc) & 
+                    (df['Split'] == best_split_name)]
+        
+        if not val_df.empty:
+            val_df['Date'] = pd.to_datetime(val_df['Date'])
+            val_df = val_df.sort_values('Date')
+            
+            fig2 = go.Figure()
+            
+            # Plot Actuals
+            actuals = val_df[val_df['Model'] == 'Actual']
+            fig2.add_trace(go.Scatter(x=actuals['Date'], y=actuals['Value'], name='Actual (Test)', line=dict(color='black', width=2)))
+            
+            # Plot All Models in this Split to show comparison
+            models = val_df['Model'].unique()
+            for m in models:
+                if m == 'Actual': continue
                 
-                fig2.update_layout(height=400, xaxis_title="Date", yaxis_title="Demand", title="History & 2025 Forecast")
-                st.plotly_chart(fig2, use_container_width=True)
+                # Color logic: Green for winner, Amber/Grey for others
+                color = '#2ecc71' if m == best_model_name else '#bdc3c7'
+                width = 3 if m == best_model_name else 1
+                opacity = 1.0 if m == best_model_name else 0.5
                 
+                m_data = val_df[val_df['Model'] == m]
+                fig2.add_trace(go.Scatter(x=m_data['Date'], y=m_data['Value'], name=m, 
+                                          line=dict(color=color, width=width), opacity=opacity))
+            
+            fig2.update_layout(
+                title=f"Model Comparison on {best_split_name}",
+                xaxis_title="Date",
+                yaxis_title="Demand",
+                template="plotly_white",
+                legend=dict(orientation="h", y=1.1)
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+            
+    st.divider()
+    
+    # 5. Chart 2: Train/Test Split & Models (Tiles)
+    # 5. Chart 2: Train/Test Split & Models (Tiles)
+    with st.expander("Model Architecture & Training Splits", expanded=False):
+        # Splits Info
+        splits = [
+            {"name": "Strategic Split", "ratio": "3y Train / 1y Test", "dates": "2021-2023 / 2024"},
+            {"name": "Standard Split", "ratio": "3.2y Train / 0.8y Test", "dates": "Jan'21-Mar'24 / Apr'24-Dec'24"},
+            {"name": "Tactical Split", "ratio": "3.5y Train / 0.5y Test", "dates": "Jan'21-Jun'24 / Jul'24-Dec'24"}
+        ]
+        
+        # Models Info
+        models = ["ETS (Holt-Winters)", "SARIMA", "Prophet", "XGBoost", "N-HiTS (Deep Learning)", "Weighted Ensemble"]
+        
+        # Layout: Tiles
+        cols = st.columns(3)
+        for i, sp in enumerate(splits):
+            with cols[i]:
+                st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border: 1px solid #ddd; text-align: center;">
+                    <h4 style="color: #023e8a;">{sp['name']}</h4>
+                    <p style="font-weight: bold; font-size: 18px;">{sp['ratio']}</p>
+                    <p style="color: #666; font-size: 12px;">{sp['dates']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # Models List
+        st.markdown("**Ensemble Composition (Council of Models):**")
+        m_cols = st.columns(6)
+        for i, m in enumerate(models):
+            with m_cols[i]:
+                st.markdown(f"<div style='text-align: center; padding: 5px; background: #e9ecef; border-radius: 5px; font-size: 12px;'>{m}</div>", unsafe_allow_html=True)
+                
+        # Visualization of Splits (Gantt-like)
+        # Simple Plotly Timeline
+        split_df = pd.DataFrame([
+            dict(Task="Strategic", Start='2021-01-01', Finish='2024-01-01', Type='Train'),
+            dict(Task="Strategic", Start='2024-01-01', Finish='2025-01-01', Type='Test'),
+            dict(Task="Standard", Start='2021-01-01', Finish='2024-03-01', Type='Train'),
+            dict(Task="Standard", Start='2024-03-01', Finish='2025-01-01', Type='Test'),
+            dict(Task="Tactical", Start='2021-01-01', Finish='2024-06-01', Type='Train'),
+            dict(Task="Tactical", Start='2024-06-01', Finish='2025-01-01', Type='Test')
+        ])
+        
+        fig_split = px.timeline(split_df, x_start="Start", x_end="Finish", y="Task", color="Type", 
+                                color_discrete_map={'Train': '#3498db', 'Test': '#e74c3c'},
+                                title="Cross-Validation Windows")
+        fig_split.update_yaxes(autorange="reversed")
+        st.plotly_chart(fig_split, use_container_width=True)
+
+# --- 6. ABOUT PAGE ---
+def about_page():
+    render_navbar()
+    st.markdown("## About the Project")
+    st.divider()
+    
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        st.markdown("""
+        ### Automobile Spare Parts Forecasting Solution (GSCM 2025-26)
+        
+        **Project Overview:**
+        This platform is a comprehensive Demand Forecasting Solution designed for the automobile spare parts industry. It analyzes historical demand data for **11 critical SKUs** across **2 distinct locations** (Mumbai/Bangalore) to generate accurate future predictions. The system leverages a Council of Models approach, training multiple statistical and deep learning models (ETS, SARIMA, Prophet, N-HiTS) on three strategic cross-validation splits to ensure robustness.
+        
+        **Key Offerings:**
+        - **Interactive Dashboard:** Executive-level view of 2025 demand, lead times, and model performance metrics.
+        - **Forecasting Tool:** On-demand scenario planning allowing users to upload new datasets for instant analysis.
+        - **Composite Scoring:** Smart model selection using a weighted mix of MAPE (40%), RMSE (40%), and Bias (20%).
+        """)
+        
+        st.markdown("""
+<br> <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #2ecc71;"> <b>Tech Mahindra x IIM Udaipur</b><br> Project made under the guidance of <b>Mr. Adarsh Uppoor (Tech Mahindra)</b> & <b>Prof. Rahul Pandey (IIM Udaipur)</b>. </div> <br> Made with Curiosity by: <br> <b>Deevyendu N Shukla & Vishesh Bhargava</b><br> IIM Udaipur GSCM 2025-26
+        """, unsafe_allow_html=True)
+        
+    with c2:
+        if os.path.exists(IIMU_LOGO):
+            st.image(IIMU_LOGO, width=200)
+        st.info("Version 2.1 (Stable)")
+
+# --- 5. FORECASTING TOOL PAGE ---
+def forecasting_tool_page():
+    render_navbar()
+    st.markdown("""
+    <style>
+    /* Hover Glow for Download Button */
+    .stDownloadButton > button:hover {
+        box-shadow: 0 0 15px rgba(46, 204, 113, 0.8), 0 0 30px rgba(46, 204, 113, 0.4) !important;
+        border-color: #2ecc71 !important;
+        color: #000000 !important;
+        background-color: #ffffff !important;
+        transition: all 0.3s ease-in-out;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("## AI/ML Forecasting Tool")
+    st.divider()
+    
+    # File Upload
+    uploaded_file = st.file_uploader("Upload Historical Data (Excel/CSV)", type=['xlsx', 'xls', 'csv'])
+    
+    if uploaded_file:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
             else:
-                 st.info("No 2025 forecast generated for this Part/Location yet.")
+                df = pd.read_excel(uploaded_file)
+                
+            # Validation
+            is_valid, error_msg = fe.validate_columns(df)
+            if not is_valid:
+                st.error(error_msg)
+                return
+                
+            # Clean Data
+            df = fe.clean_data(df)
+            st.success("File uploaded successfully! Select a Part/Location to Analyze.")
+            
+            # Selectors
+            parts = df['Spare Part ID'].unique()
+            c1, c2, c3 = st.columns([1, 1, 1])
+            with c1:
+                sel_part = st.selectbox("Select Part", parts)
+            with c2:
+                locs = df[df['Spare Part ID'] == sel_part]['Location'].unique()
+                sel_loc = st.selectbox("Select Location", locs)
+            
+            # Analyze Button
+            with c3:
+                st.markdown("<br>", unsafe_allow_html=True)
+                analyze_btn = st.button("Analyze & Forecast", type="primary", use_container_width=True)
+                
+            if analyze_btn:
+                progress_bar = st.progress(0, text="Starting Analysis...")
+                
+                # Run Engine
+                def update_progress(p, text):
+                    progress_bar.progress(p, text=text)
+                    
+                result = fe.analyze_part_location(df, sel_part, sel_loc, update_progress)
+                
+                if 'error' in result:
+                    st.error(result['error'])
+                else:
+                    progress_bar.progress(100, text="Analysis Complete!")
+                    
+                    # --- DISPLAY RESULTS ---
+                    st.divider()
+                    st.markdown(f"### Forecast Results: {sel_part} - {sel_loc}")
+                    st.markdown(f"**Best Model Selected:** {result['best_model']} (RMSE: {result['best_rmse']:.2f})")
+                    
+                    # Tiles
+                    t1, t2 = st.columns(2)
+                    with t1:
+                         st.markdown(f"""
+                        <div style="background-color: #e8f5e9; padding: 10px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                            <h3 style="color: #2e7d32; margin:0; font-family: Canela; font-size: 1.2em;">Forecasted Demand (12M)</h3>
+                            <h1 style="color: #1b5e20; margin:0; font-size: 2em; font-family: Canela;">{result['total_forecast_demand']:,.0f}</h1>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    with t2:
+                        st.markdown(f"""
+                        <div style="background-color: #fff3e0; padding: 10px; border-radius: 15px; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                            <h3 style="color: #ef6c00; margin:0; font-family: Canela; font-size: 1.2em;">Avg. Lead Time (Forecast)</h3>
+                            <h1 style="color: #e65100; margin:0; font-size: 2em; font-family: Canela;">{result['avg_forecast_lead_time']:.1f}</h1>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    
+                    # ECharts Visualization
+                    # Prepare Data
+                    h_dates = result['history_dates']
+                    f_dates = result['forecast_dates']
+                    h_vals = result['history_values']
+                    f_vals = result['forecast_values']
+                    
+                    # Convert dates
+                    x_data = [d.strftime('%Y-%m-%d') for d in h_dates]
+                    x_data += [d.strftime('%Y-%m-%d') for d in f_dates]
+                    
+                    # Series
+                    y_hist = h_vals + [None] * len(f_vals)
+                    y_forc = [None] * len(h_vals) + f_vals
+                    
+                    options = {
+                        "title": {"text": "Forecast Visualization", "left": "center", "textStyle": {"fontFamily": "Canela"}},
+                        "legend": {"data": ["History", "Forecast"], "bottom": "0", "textStyle": {"fontFamily": "Canela", "fontSize": 14}},
+                        "tooltip": {"trigger": "axis"},
+                        "xAxis": {"type": "category", "data": x_data, "boundaryGap": False},
+                        "yAxis": {"type": "value", "scale": True},
+                        "grid": {"bottom": "10%", "containLabel": True},
+                        "series": [
+                            {
+                                "name": "History", "type": "line", "data": y_hist, 
+                                "smooth": True, "lineStyle": {"color": "black", "width": 3},
+                                "itemStyle": {"color": "black"}, 
+                                "animationDuration": 3000,
+                                "animationEasing": "linear"
+                            },
+                            {
+                                "name": "Forecast", "type": "line", "data": y_forc,
+                                "smooth": True, "lineStyle": {"color": "#2ecc71", "width": 4},
+                                "itemStyle": {"color": "#2ecc71"}, 
+                                "animationDuration": 2000,
+                                "animationEasing": "linear",
+                                "animationDelay": 3000
+                            }
+                        ],
+                        "animation": True
+                    }
+                    st_echarts(options=options, height="450px", key=f"tool_chart_{uuid.uuid4()}")
+                    
         except Exception as e:
-            st.error(f"Error loading forecast: {e}")
-    else:
-        st.warning("Future Forecast Database not found. Please regenerate data.")
+            st.error(f"Error processing file: {str(e)}")
 
-    # --- ABOUT SECTION REMOVED (Moved to pages/About.py) ---
+
+# --- ROUTER ---
+def main():
+    # 1. Init Session State
+    if 'page' not in st.session_state:
+        st.session_state['page'] = 'landing'
+        
+    # 2. Sidebar Removed (Top Nav Implemented in pages)
+    
+    # 3. Page Rendering
+    if st.session_state['page'] == 'landing':
+        landing_page()
+    elif st.session_state['page'] == 'dashboard':
+        dashboard_page()
+    elif st.session_state['page'] == 'tool':
+        forecasting_tool_page()
+    elif st.session_state['page'] == 'about':
+        about_page()
 
 if __name__ == "__main__":
     main()

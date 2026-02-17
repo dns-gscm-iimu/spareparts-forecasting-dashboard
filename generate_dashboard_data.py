@@ -46,20 +46,41 @@ def update_status(current, total, msg):
 
 TARGET_PARTS = ['PD457', 'PD2976', 'PD1399', 'PD3978', 'PD238']
 
-TARGET_PARTS = ['PD457', 'PD2976', 'PD1399', 'PD3978', 'PD238']
+TARGET_PARTS = [
+    'PD457', 'PD2976', 'PD1399', 'PD3978', 'PD238', # High
+    'PD7820', 'PD391', 'PD112', 'PD293', # Medium
+    'PD2782', 'PD2801' # Low
+]
 
 # Weights for Weighted Ensemble (SARIMA, Prophet, XGBoost)
 WEIGHTS = {
+    # HIGH
     ('PD1399', 'A'): {'SARIMA': 0.37, 'Prophet': 0.34, 'XGBoost': 0.29},
     ('PD1399', 'B'): {'SARIMA': 0.29, 'Prophet': 0.40, 'XGBoost': 0.27},
     ('PD2976', 'A'): {'SARIMA': 0.33, 'Prophet': 0.24, 'XGBoost': 0.37},
-    ('PD2976', 'B'): {'SARIMA': 0.45, 'Prophet': 0.13, 'XGBoost': 0.19}, # Normalized sums roughly
+    ('PD2976', 'B'): {'SARIMA': 0.45, 'Prophet': 0.13, 'XGBoost': 0.19},
     ('PD3978', 'A'): {'SARIMA': 0.40, 'Prophet': 0.31, 'XGBoost': 0.27},
-    ('PD3978', 'B'): {'SARIMA': 0.38, 'Prophet': 0.36, 'XGBoost': 0.26}, # Adjusted to sum 1.0 (Logic: 19->26 to balance?) User said 0.19.. wait. 0.38+0.36+0.19 = 0.93. I will normalize dynamically.
+    ('PD3978', 'B'): {'SARIMA': 0.38, 'Prophet': 0.36, 'XGBoost': 0.26},
     ('PD457', 'A'): {'SARIMA': 0.38, 'Prophet': 0.27, 'XGBoost': 0.25},
     ('PD457', 'B'): {'SARIMA': 0.36, 'Prophet': 0.30, 'XGBoost': 0.25},
     ('PD238', 'A'): {'SARIMA': 0.27, 'Prophet': 0.40, 'XGBoost': 0.29},
-    ('PD238', 'B'): {'SARIMA': 0.46, 'Prophet': 0.21, 'XGBoost': 0.21}
+    ('PD238', 'B'): {'SARIMA': 0.46, 'Prophet': 0.21, 'XGBoost': 0.21},
+    
+    # MEDIUM (Default Balanced Weights 0.34/0.33/0.33)
+    ('PD7820', 'A'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD7820', 'B'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD391', 'A'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD391', 'B'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD112', 'A'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD112', 'B'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD293', 'A'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD293', 'B'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    
+    # LOW (Default Balanced Weights)
+    ('PD2782', 'A'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD2782', 'B'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD2801', 'A'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
+    ('PD2801', 'B'): {'SARIMA': 0.34, 'Prophet': 0.33, 'XGBoost': 0.33},
 }
 
 # --- Model Wrappers ---

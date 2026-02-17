@@ -2,3 +2,10 @@ streamlit==1.40.1
 pandas
 plotly
 numpy
+streamlit-echarts
+darts
+xgboost
+prophet
+statsmodels
+scikit-learn
+openpyxl
