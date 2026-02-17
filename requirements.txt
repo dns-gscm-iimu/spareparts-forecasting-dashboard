@@ -9,3 +9,4 @@ prophet
 statsmodels
 scikit-learn
 openpyxl
+xlsxwriter
